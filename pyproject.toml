@@ -6,14 +6,22 @@ authors = [
   { name = "Dario Mazza", email = "d.mazza6@studenti.unisa.it" }
 ]
 requires-python = ">=3.11"
+
 dependencies = [
   "pydantic>=2.6.4",
   "pyyaml>=6.0.1",
-  "pytest>=8.3.0",
-  "pytest-cov>=6.0.0",
   "typing-extensions>=4.11.0"
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-cov>=6.0.0",
+  "black>=24.4.2",
+  "isort>=5.13.2",
+  "flake8>=7.0.0",
+  "mypy>=1.10.0"
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -43,12 +51,12 @@ exclude = '''
 [tool.isort]
 profile = "black"
 line_length = 79
-known_third_party = ["django"]  # Add other third-party libraries as needed
-src_paths = ["src", "apps"]  # Adjust paths as per your project structure
+known_third_party = ["django"]
+src_paths = ["src", "apps"]
 
 [tool.flake8]
 max-line-length = 79
-extend-ignore = ["E203", "W503"]  # For compatibility with Black (optional)
+extend-ignore = ["E203", "W503"]
 
 [tool.mypy]
 python_version = "3.11"
