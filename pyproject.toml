@@ -1,0 +1,68 @@
+[project]
+name = "tosca-roundtrip"
+version = "0.1.0"
+description = "A roundtrip engineering tool for translating TOSCA 2.0 to and from Infrastructure-as-Code (IaC) models"
+authors = [
+  { name = "Dario Mazza", email = "d.mazza6@studenti.unisa.it" }
+]
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.6.4",
+  "pyyaml>=6.0.1",
+  "pytest>=8.3.0",
+  "pytest-cov>=6.0.0",
+  "typing-extensions>=4.11.0"
+]
+
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 79
+target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | venv
+  | \.env
+  | \.flake8
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 79
+known_third_party = ["django"]  # Add other third-party libraries as needed
+src_paths = ["src", "apps"]  # Adjust paths as per your project structure
+
+[tool.flake8]
+max-line-length = 79
+extend-ignore = ["E203", "W503"]  # For compatibility with Black (optional)
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+show_error_codes = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+  "tests"
+]
+
+[tool.pydantic-mypy]
+init_typed = true
+warn_required_dynamic_aliases = true
