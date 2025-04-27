@@ -24,7 +24,8 @@ class RequirementMapper:
                 Requirement(
                     name=entry.get("name", ""),
                     capability=entry.get("capabilityTypeName")
-                    or entry.get("capabilityName"),
+                    or entry.get("capabilityName")
+                    or "Undefined",
                     target_node=entry.get("nodeTemplateName"),
                     relationship=relationship_type,
                 )
