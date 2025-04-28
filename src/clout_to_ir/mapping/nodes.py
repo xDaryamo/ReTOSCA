@@ -10,6 +10,7 @@ from src.ir.models import Node
 from .attributes import AttributeMapper
 from .base_strategy import IMapperStrategy
 from .capabilities import CapabilityMapper
+from .inference import infer_category
 from .primitives import primary_type
 from .requirements import RequirementMapper
 
@@ -30,10 +31,14 @@ class NodeMapper(IMapperStrategy):
                 continue
 
             props = vertex.get("properties", {})
+            node_type = primary_type(vertex)
+            raw_caps = props.get("capabilities")
+            category = infer_category(node_type, raw_caps)
 
             node = Node(
                 id=v_id,
-                type=primary_type(vertex),
+                type=node_type,
+                category=category,
                 properties=props.get("properties", {}),
                 attributes=AttributeMapper.map(props.get("attributes")),
                 description=props.get("description"),
