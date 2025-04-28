@@ -3,9 +3,8 @@
 
 # TOSCA Roundtrip
 
-**TOSCA Roundtrip** is a toolchain that enables **deterministic parsing and transformation** of TOSCA 2.0 service templates into an **intermediate representation (IR)**, by leveraging **Puccini Clout** graphs.
-
-The goal is to support **roundtrip engineering** between high-level TOSCA specifications and various Infrastructure-as-Code (IaC) models.
+**TOSCA Roundtrip** is a modular and extensible tool designed to enable deterministic and reversible transformations between high-level **TOSCA 2.0** service templates and various **Infrastructure-as-Code (IaC)** technologies.  
+It supports both **forward engineering** (TOSCA → IaC) and **reverse engineering** (IaC → TOSCA), aiming to improve infrastructure portability, abstraction, and consistency across heterogeneous environments.  
 
 ---
 
