@@ -256,6 +256,8 @@ class Node(BaseModel):
     """Component (vertex) of the service topology graph."""
 
     id: str = Field(..., description="Unique node identifier within a model.")
+    name: Optional[str] = Field(None, description="Human-readable logical name (for template reference)."
+    )
     type: str = Field(..., description="Node type QName or IaC resource type.")
     category: Optional[NodeCategory] = Field(
         None, description="High‑level category hint (optional)."
