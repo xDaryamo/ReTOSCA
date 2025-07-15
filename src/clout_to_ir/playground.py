@@ -17,7 +17,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-DEFAULT_PATH = Path("examples/clout.yaml")
+DEFAULT_PATH = Path("examples/async-clout.yaml")
 
 
 def main(path: str | Path = DEFAULT_PATH) -> None:

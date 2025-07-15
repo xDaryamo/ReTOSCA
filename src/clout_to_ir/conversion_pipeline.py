@@ -24,7 +24,7 @@ from ir.models import DeploymentModel
 
 from .exceptions import CloutError
 from .io.loader_factory import LoaderFactory
-from .mapping import build_ir
+from .conversion import process_clout_to_ir
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class ConversionPipeline:
     def run(self) -> DeploymentModel:
         """Return a fully-validated `DeploymentModel` (raises on failure)."""
         logger.debug("Building DeploymentModel from clout dict")
-        model = build_ir(self._clout_dict, keep_meta=self._keep_meta)
+        model = process_clout_to_ir(self._clout_dict, keep_meta=self._keep_meta)
 
         logger.info(
             "Conversion succeeded – %d node(s), %d relationship(s)",
