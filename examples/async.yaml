@@ -1,0 +1,427 @@
+tosca_definitions_version: tosca_2_0
+
+# Abstract, vendor-agnostic TOSCA template derived from Ansible playbook
+# The DevOps Engineer writes this without thinking about Ansible specifics
+
+metadata:
+  template_name: "Async Operations Service"
+  template_author: "DevOps Engineer"
+  description: "Service template for asynchronous operations with file management"
+
+repositories:
+  tosca-community: https://raw.githubusercontent.com/xDaryamo/tosca-community-contributions/master/
+
+imports:
+  - url: profiles/org/oasis-open/simple/2.0/profile.yaml
+    repository: tosca-community
+    namespace: tosca
+
+
+
+# Custom types for our domain-specific operations
+node_types:
+
+  # Abstract type for system preparation
+  AsyncEnvironment:
+    derived_from: tosca:SoftwareComponent
+    description: "Environment setup for asynchronous operations"
+    properties:
+      async_directory:
+        type: string
+        description: "Directory for async operations"
+        default: "~/.ansible_async"
+      setup_required:
+        type: boolean
+        description: "Whether environment setup is required"
+        default: true
+    attributes:
+      environment_status:
+        type: string
+        description: "Status of environment setup"
+    interfaces:
+      Standard:
+        type: tosca:Lifecycle.Standard
+        operations:
+          create:
+            description: "Setup async environment"
+          configure:
+            description: "Configure environment for async operations"
+
+  # Abstract type for long-running operations
+  AsyncOperation:
+    derived_from: tosca:SoftwareComponent
+    description: "Abstract long-running operation"
+    properties:
+      operation_name:
+        type: string
+        description: "Name of the operation"
+        required: true
+      timeout_seconds:
+        type: integer
+        description: "Maximum execution time"
+        default: 30
+        validation: { $greater_than: [ $value, 0 ] }
+      polling_interval:
+        type: integer
+        description: "Polling interval in seconds"
+        default: 5
+        validation: { $greater_than: [ $value, 0 ] }
+      fire_and_forget:
+        type: boolean
+        description: "Whether to wait for completion"
+        default: false
+      retry_attempts:
+        type: integer
+        description: "Number of retry attempts"
+        default: 20
+        validation: { $greater_or_equal: [ $value, 0 ] }
+    attributes:
+      operation_status:
+        type: string
+        description: "Current status of the operation"
+      execution_time:
+        type: integer
+        description: "Actual execution time"
+      job_id:
+        type: string
+        description: "Unique identifier for the async operation"
+    interfaces:
+      Standard:
+        type: tosca:Lifecycle.Standard
+        operations:
+          start:
+            description: "Start the async operation"
+          stop:
+            description: "Stop the async operation"
+      AsyncManagement:
+        type: AsyncManagementInterface
+        operations:
+          execute_async:
+            description: "Execute operation asynchronously"
+          check_status:
+            description: "Check operation status"
+          wait_completion:
+            description: "Wait for operation completion"
+
+  # Specific type for file operations
+  FileOperation:
+    derived_from: AsyncOperation
+    description: "File system operation"
+    properties:
+      target_file:
+        type: string
+        description: "Target file path"
+        required: true
+      operation_type:
+        type: string
+        description: "Type of file operation"
+        validation: { $valid_values: [ $value, [ "create", "delete", "modify" ] ] }
+        required: true
+      delay_before_execution:
+        type: integer
+        description: "Delay before executing operation"
+        default: 0
+
+  # Type for monitoring and debugging
+  OperationMonitor:
+    derived_from: tosca:SoftwareComponent
+    description: "Monitoring and debugging component"
+    properties:
+      debug_messages:
+        type: list
+        description: "List of debug messages to display"
+        entry_schema:
+          type: string
+        default: []
+      monitoring_enabled:
+        type: boolean
+        description: "Whether monitoring is enabled"
+        default: true
+    interfaces:
+      Standard:
+        type: tosca:Lifecycle.Standard
+        operations:
+          start:
+            description: "Start monitoring"
+      Monitoring:
+        type: MonitoringInterface
+        operations:
+          display_debug:
+            description: "Display debug information"
+          log_status:
+            description: "Log operation status"
+
+# Custom interface types
+interface_types:
+
+  AsyncManagementInterface:
+    description: "Interface for managing asynchronous operations"
+    operations:
+      execute_async:
+        description: "Execute operation asynchronously"
+        inputs:
+          async_timeout:
+            type: integer
+            description: "Async operation timeout"
+          poll_interval:
+            type: integer
+            description: "Polling interval"
+      check_status:
+        description: "Check the status of async operation"
+        outputs:
+          status:
+            type: string
+            description: "Operation status"
+          job_id:
+            type: string
+            description: "Job identifier"
+      wait_completion:
+        description: "Wait for operation to complete"
+        inputs:
+          max_retries:
+            type: integer
+            description: "Maximum retry attempts"
+
+  MonitoringInterface:
+    description: "Interface for monitoring and debugging"
+    operations:
+      display_debug:
+        description: "Display debug information"
+        inputs:
+          message:
+            type: string
+            description: "Debug message to display"
+      log_status:
+        description: "Log current status"
+
+# Service template definition
+service_template:
+
+  inputs:
+    target_hosts:
+      type: string
+      description: "Target hosts for operations"
+      default: "all"
+    async_timeout:
+      type: integer
+      description: "Global async timeout"
+      default: 30
+      validation: { $greater_than: [ $value, 0 ] }
+    polling_interval:
+      type: integer
+      description: "Global polling interval"
+      default: 5
+      validation: { $greater_than: [ $value, 0 ] }
+
+  node_templates:
+
+    # Environment setup component
+    async_environment:
+      type: AsyncEnvironment
+      properties:
+        async_directory: "~/.ansible_async"
+        setup_required: true
+
+    # Monitor component for debug messages
+    operation_monitor:
+      type: OperationMonitor
+      properties:
+        debug_messages:
+          - "I'm a debug message."
+          - "I'm another debug message."
+          - "I'm yet another debug message."
+        monitoring_enabled: true
+
+    # First async operation: polling sleep
+    polling_sleep_operation:
+      type: AsyncOperation
+      properties:
+        operation_name: "polling_sleep"
+        timeout_seconds: { $get_input: async_timeout }
+        polling_interval: { $get_input: polling_interval }
+        fire_and_forget: false
+      requirements:
+        - dependency: async_environment
+
+    # First debug checkpoint
+    debug_checkpoint_1:
+      type: OperationMonitor
+      properties:
+        debug_messages: ["I'm a debug message."]
+      requirements:
+        - dependency: polling_sleep_operation
+
+    # File creation operation (fire and forget)
+    file_create_operation:
+      type: FileOperation
+      properties:
+        operation_name: "create_test_file"
+        target_file: "/tmp/test_file"
+        operation_type: "create"
+        delay_before_execution: 15
+        timeout_seconds: { $get_input: async_timeout }
+        fire_and_forget: true
+        retry_attempts: 20
+      requirements:
+        - dependency: debug_checkpoint_1
+
+    # Second debug checkpoint
+    debug_checkpoint_2:
+      type: OperationMonitor
+      properties:
+        debug_messages: ["I'm another debug message."]
+      requirements:
+        - dependency: file_create_operation
+
+    # Status monitoring for file creation
+    file_create_monitor:
+      type: AsyncOperation
+      properties:
+        operation_name: "monitor_file_creation"
+        retry_attempts: 20
+        fire_and_forget: false
+      requirements:
+        - dependency: file_create_operation
+
+    # File deletion operation (fire and forget)
+    file_delete_operation:
+      type: FileOperation
+      properties:
+        operation_name: "delete_test_file"
+        target_file: "/tmp/test_file"
+        operation_type: "delete"
+        delay_before_execution: 10
+        timeout_seconds: { $get_input: async_timeout }
+        fire_and_forget: true
+        retry_attempts: 20
+      requirements:
+        - dependency: debug_checkpoint_2
+
+    # Final debug checkpoint
+    debug_checkpoint_3:
+      type: OperationMonitor
+      properties:
+        debug_messages: ["I'm yet another debug message."]
+      requirements:
+        - dependency: file_delete_operation
+
+    # Status monitoring for file deletion
+    file_delete_monitor:
+      type: AsyncOperation
+      properties:
+        operation_name: "monitor_file_deletion"
+        retry_attempts: 20
+        fire_and_forget: false
+      requirements:
+        - dependency: file_delete_operation
+
+  # Workflow definition for orchestrating the async operations
+  workflows:
+    async_operations_workflow:
+      description: "Orchestrates the sequence of async operations"
+      steps:
+        setup_environment:
+          target: async_environment
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+          on_success: [start_polling_sleep]
+
+        start_polling_sleep:
+          target: polling_sleep_operation
+          activities:
+            - call_operation:
+                operation: AsyncManagement.execute_async
+                inputs:
+                  async_timeout: { $get_input: async_timeout }
+                  poll_interval: { $get_input: polling_interval }
+            - call_operation:
+                operation: AsyncManagement.wait_completion
+                inputs:
+                  max_retries: 20
+          on_success: [display_debug_1]
+
+        display_debug_1:
+          target: debug_checkpoint_1
+          activities:
+            - call_operation:
+                operation: Monitoring.display_debug
+                inputs:
+                  message: "I'm a debug message."
+          on_success: [start_file_creation]
+
+        start_file_creation:
+          target: file_create_operation
+          activities:
+            - call_operation:
+                operation: AsyncManagement.execute_async
+                inputs:
+                  async_timeout: { $get_input: async_timeout }
+                  poll_interval: 0  # Fire and forget
+          on_success: [display_debug_2, monitor_file_creation]
+
+        display_debug_2:
+          target: debug_checkpoint_2
+          activities:
+            - call_operation:
+                operation: Monitoring.display_debug
+                inputs:
+                  message: "I'm another debug message."
+          on_success: [start_file_deletion]
+
+        monitor_file_creation:
+          target: file_create_monitor
+          activities:
+            - call_operation: AsyncManagement.check_status
+            - call_operation:
+                operation: AsyncManagement.wait_completion
+                inputs:
+                  max_retries: 20
+
+        start_file_deletion:
+          target: file_delete_operation
+          activities:
+            - call_operation:
+                operation: AsyncManagement.execute_async
+                inputs:
+                  async_timeout: { $get_input: async_timeout }
+                  poll_interval: 0  # Fire and forget
+          on_success: [display_debug_3, monitor_file_deletion]
+
+        display_debug_3:
+          target: debug_checkpoint_3
+          activities:
+            - call_operation:
+                operation: Monitoring.display_debug
+                inputs:
+                  message: "I'm yet another debug message."
+
+        monitor_file_deletion:
+          target: file_delete_monitor
+          activities:
+            - call_operation: AsyncManagement.check_status
+            - call_operation:
+                operation: AsyncManagement.wait_completion
+                inputs:
+                  max_retries: 20
+
+  outputs:
+    service_status:
+      description: "Overall status of the async operations service"
+      value: { $get_attribute: [ file_delete_monitor, operation_status ] }
+    
+    environment_directory:
+      description: "Directory used for async operations"
+      value: { $get_property: [ async_environment, async_directory ] }
+    
+    operations_summary:
+      description: "Summary of all operations performed"
+      value:
+        - operation: { $get_property: [ polling_sleep_operation, operation_name ] }
+          status: { $get_attribute: [ polling_sleep_operation, operation_status ] }
+        - operation: { $get_property: [ file_create_operation, operation_name ] }
+          target: { $get_property: [ file_create_operation, target_file ] }
+          status: { $get_attribute: [ file_create_operation, operation_status ] }
+        - operation: { $get_property: [ file_delete_operation, operation_name ] }
+          target: { $get_property: [ file_delete_operation, target_file ] }
+          status: { $get_attribute: [ file_delete_operation, operation_status ] }
