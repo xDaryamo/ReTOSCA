@@ -69,6 +69,7 @@ class NodeConverter(BaseConverter):
         """
         # Extract vertex properties
         props = vertex.get("properties", {})
+        name = props.get("name", vertex_id)  # Fallback to ID if no name
         node_type = primary_type(vertex)
         raw_capabilities = props.get("capabilities")
         
@@ -90,6 +91,7 @@ class NodeConverter(BaseConverter):
         
         return Node(
             id=vertex_id,
+            name=name,
             type=node_type,
             category=category,
             properties=properties,
