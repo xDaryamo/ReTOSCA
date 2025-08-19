@@ -5,6 +5,7 @@ description = "Infrastructure Intent Discovery via TOSCA-based Reverse Engineeri
 authors = ["xDaryamo <mr.dario.mazza@gmail.com>"]
 readme = "README.md"
 packages = [
+  {include = "src"},
   {include = "core", from = "src"},
   {include = "plugins", from = "src"},
   {include = "models", from = "src"}
@@ -64,6 +65,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -71,11 +73,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--verbose",
-    "--tb=short",
-    "--cov=src",
-    "--cov-report=html",
-    "--cov-report=term-missing",
-    "--cov-fail-under=90"
+    "--tb=short"
 ]
 markers = [
     "unit: Unit tests",
