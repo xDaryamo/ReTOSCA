@@ -42,10 +42,6 @@ jobs:
       - name: Black (format check)
         run: poetry run black --check .
 
-      # (opzionale) Mypy:
-      # - name: Mypy (type-check)
-      #   run: poetry run mypy src
-
   test:
     name: Tests (coverage)
     needs: lint
