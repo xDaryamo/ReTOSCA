@@ -23,4 +23,15 @@ repos:
     rev: v1.7.1
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic]
+        additional_dependencies:
+          - pydantic>=2.11.7
+          - pydantic-core>=2
+          - types-PyYAML
+          - ruamel.yaml>=0.18.14
+        args:
+          - --python-version=3.11
+          - --ignore-missing-imports
+          - --show-error-codes
+          - --pretty
+          - --cache-dir=.mypy_cache
+        exclude: ^(tests/|migrations/)
