@@ -58,9 +58,10 @@ class OperationOrNotificationAssignment(ToscaBase):
         """
         Post-validation hook.
 
-        Se _assignment_type è impostato esternamente, ne verifica la validità.
-        Accetta direttamente AssignmentType o prova a coercizzare da stringa.
+        If `_assignment_type` is set externally, validate it.
+        Accepts an `AssignmentType` directly or attempts to coerce from a string.
         """
+
         if self._assignment_type is None:
             return self
 
