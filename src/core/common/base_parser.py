@@ -126,9 +126,19 @@ class BaseSourceFileParser(SourceFileParser, ABC):
             raise ValueError(f"Path is not a file: {file_path}")
 
         supported_extensions = self.get_supported_extensions()
-        if supported_extensions and file_path.suffix not in supported_extensions:
+        if supported_extensions:
+            # Check for exact suffix match first
+            if file_path.suffix in supported_extensions:
+                return
+
+            # Check for multi-part extensions (e.g., .tf.json)
+            for ext in supported_extensions:
+                if file_path.name.endswith(ext):
+                    return
+
+            # No match found
             raise ValueError(
-                f"Unsupported file extension '{file_path.suffix}'. "
+                f"Unsupported file extension. "
                 f"Supported extensions: {supported_extensions}"
             )
 
