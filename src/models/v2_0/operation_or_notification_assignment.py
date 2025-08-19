@@ -58,17 +58,22 @@ class OperationOrNotificationAssignment(ToscaBase):
         """
         Post-validation hook.
 
-        Ensures `_assignment_type`, if set externally, is a valid AssignmentType.
-        You can also derive it here in futuro (es. in base al contesto).
+        Se _assignment_type è impostato esternamente, ne verifica la validità.
+        Accetta direttamente AssignmentType o prova a coercizzare da stringa.
         """
-        if (
-            self._assignment_type is not None
-            and self._assignment_type not in AssignmentType
-        ):
+        if self._assignment_type is None:
+            return self
+
+        if isinstance(self._assignment_type, AssignmentType):
+            return self
+
+        try:
+            self._assignment_type = AssignmentType(self._assignment_type)
+        except Exception as err:
             valid = [e.value for e in AssignmentType]
             raise ValueError(
                 f"Invalid assignment type '{self._assignment_type}'. "
                 f"Valid values: {valid}"
-            )
+            ) from err
 
         return self
