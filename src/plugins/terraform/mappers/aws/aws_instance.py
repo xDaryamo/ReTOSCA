@@ -1,6 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
+from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
 
 if TYPE_CHECKING:
@@ -256,8 +257,6 @@ class AWSInstanceMapper(SingleResourceMapper):
             return
 
         # Generate a unique TOSCA node name using the utility function
-        from core.common.base_mapper import BaseResourceMapper
-
         node_name = BaseResourceMapper.generate_tosca_node_name(
             resource_name, resource_type
         )

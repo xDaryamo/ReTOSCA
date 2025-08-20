@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 # Import the base class from core
-from core.common.base_parser import BaseSourceFileParser
+from src.core.common.base_parser import BaseSourceFileParser
 
 logger = logging.getLogger(__name__)
 
