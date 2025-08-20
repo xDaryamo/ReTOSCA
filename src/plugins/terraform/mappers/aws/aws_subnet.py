@@ -2,9 +2,9 @@ import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
-from core.common.base_mapper import BaseResourceMapper
-from core.protocols import SingleResourceMapper
-from plugins.terraform.mapper import TerraformMapper
+from src.core.common.base_mapper import BaseResourceMapper
+from src.core.protocols import SingleResourceMapper
+from src.plugins.terraform.mapper import TerraformMapper
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder

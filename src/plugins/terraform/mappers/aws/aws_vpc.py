@@ -1,8 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from core.common.base_mapper import BaseResourceMapper
-from core.protocols import SingleResourceMapper
+from src.core.common.base_mapper import BaseResourceMapper
+from src.core.protocols import SingleResourceMapper
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
