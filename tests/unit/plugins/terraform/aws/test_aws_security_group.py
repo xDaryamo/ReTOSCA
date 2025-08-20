@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from plugins.terraform.mapper import TerraformMapper
 
+from plugins.terraform.mapper import TerraformMapper
 from src.plugins.terraform.mappers.aws.aws_security_group import (
     AWSSecurityGroupMapper,
 )
