@@ -86,7 +86,9 @@ class TestBaseSourceFileParser:
     ) -> None:
         # Force an internal exception: can_parse must return False
         monkeypatch.setattr(
-            parser, "get_supported_extensions", lambda: 1 / 0  # type: ignore
+            parser,
+            "get_supported_extensions",
+            lambda: 1 / 0,  # type: ignore
         )
         f = tmp_path / "a.test"
         f.write_text("x")
