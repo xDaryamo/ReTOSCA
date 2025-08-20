@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ master, models, core]
+    branches: [ master, models, core, terraform-plugin]
   pull_request:
 
 jobs:
