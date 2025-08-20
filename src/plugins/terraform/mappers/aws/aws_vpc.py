@@ -129,13 +129,13 @@ class AWSVPCMapper(SingleResourceMapper):
         if enable_classiclink is not None:
             metadata["aws_enable_classiclink"] = enable_classiclink
         if enable_classiclink_dns_support is not None:
-            metadata[
-                "aws_enable_classiclink_dns_support"
-            ] = enable_classiclink_dns_support
+            metadata["aws_enable_classiclink_dns_support"] = (
+                enable_classiclink_dns_support
+            )
         if assign_generated_ipv6_cidr_block is not None:
-            metadata[
-                "aws_assign_generated_ipv6_cidr_block"
-            ] = assign_generated_ipv6_cidr_block
+            metadata["aws_assign_generated_ipv6_cidr_block"] = (
+                assign_generated_ipv6_cidr_block
+            )
         if ipv6_cidr_block:
             metadata["aws_ipv6_cidr_block"] = ipv6_cidr_block
         if ipv6_ipam_pool_id:

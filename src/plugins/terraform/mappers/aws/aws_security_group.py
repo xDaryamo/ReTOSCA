@@ -267,9 +267,9 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
                                 "prefix_list_id"
                             ]
                         if resource_values.get("referenced_security_group_id"):
-                            rule_metadata[
-                                "referenced_security_group_id"
-                            ] = resource_values["referenced_security_group_id"]
+                            rule_metadata["referenced_security_group_id"] = (
+                                resource_values["referenced_security_group_id"]
+                            )
 
                         ingress_rules_metadata.append(rule_metadata)
 
@@ -322,9 +322,9 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
                                 "prefix_list_id"
                             ]
                         if resource_values.get("referenced_security_group_id"):
-                            rule_metadata[
-                                "referenced_security_group_id"
-                            ] = resource_values["referenced_security_group_id"]
+                            rule_metadata["referenced_security_group_id"] = (
+                                resource_values["referenced_security_group_id"]
+                            )
 
                         egress_rules_metadata.append(rule_metadata)
 

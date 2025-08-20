@@ -47,7 +47,7 @@ class AWSSubnetMapper(SingleResourceMapper):
             )
             return
 
-        # Genera un nome di nodo TOSCA univoco usando la funzione di utilità
+        # Generate a unique TOSCA node name using the utility function
         node_name = BaseResourceMapper.generate_tosca_node_name(
             resource_name, resource_type
         )
@@ -116,9 +116,9 @@ class AWSSubnetMapper(SingleResourceMapper):
         # Map public IP on customer-owned pool
         map_customer_owned_ip_on_launch = values.get("map_customer_owned_ip_on_launch")
         if map_customer_owned_ip_on_launch is not None:
-            metadata[
-                "aws_map_customer_owned_ip_on_launch"
-            ] = map_customer_owned_ip_on_launch
+            metadata["aws_map_customer_owned_ip_on_launch"] = (
+                map_customer_owned_ip_on_launch
+            )
 
         # Outpost ARN (present for Outpost subnets)
         outpost_arn = values.get("outpost_arn")
