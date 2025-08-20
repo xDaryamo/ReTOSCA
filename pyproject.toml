@@ -23,7 +23,7 @@ pytest = "^8.4.1"
 pytest-cov = "^6.2.1"
 pytest-mock = "^3.14.1"
 black = "^24.0.0"
-ruff = "^0.1.6"
+ruff = "^0.12.9"
 mypy = "^1.7.1"
 
 [build-system]
@@ -38,6 +38,8 @@ include = '\.pyi?$'
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+
+[tool.ruff.lint]
 select = [
     "E", "W",  # pycodestyle
     "F",       # pyflakes
