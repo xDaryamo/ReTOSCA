@@ -73,6 +73,11 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         self._mapper.register_mapper("aws_ebs_volume", AWSEBSVolumeMapper())
 
+        # Register the mapper for AWS DB Instance
+        from .mappers.aws.aws_db_instance import AWSDBInstanceMapper
+
+        self._mapper.register_mapper("aws_db_instance", AWSDBInstanceMapper())
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:
