@@ -78,6 +78,11 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         self._mapper.register_mapper("aws_db_instance", AWSDBInstanceMapper())
 
+        # Register the mapper for AWS Internet Gateway
+        from .mappers.aws.aws_internet_gateway import AWSInternetGatewayMapper
+
+        self._mapper.register_mapper("aws_internet_gateway", AWSInternetGatewayMapper())
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:

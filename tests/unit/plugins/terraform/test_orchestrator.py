@@ -147,6 +147,7 @@ class TestRegistrationAndInfo:
         assert "aws_s3_bucket" in regs
         assert "aws_ebs_volume" in regs
         assert "aws_db_instance" in regs
+        assert "aws_internet_gateway" in regs
 
     def test_get_orchestrator_info_uses_current_components(self) -> None:
         orch = TerraformOrchestrator()
