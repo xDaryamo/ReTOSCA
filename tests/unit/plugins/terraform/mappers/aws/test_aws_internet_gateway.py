@@ -105,6 +105,10 @@ class TestCanMap:
         m = AWSInternetGatewayMapper()
         assert m.can_map("aws_internet_gateway", {"values": {}}) is True
 
+    def test_can_map_true_for_egress_only_igw(self) -> None:
+        m = AWSInternetGatewayMapper()
+        assert m.can_map("aws_egress_only_internet_gateway", {"values": {}}) is True
+
     def test_can_map_false_for_other(self) -> None:
         m = AWSInternetGatewayMapper()
         assert m.can_map("aws_subnet", {"values": {}}) is False
@@ -157,13 +161,17 @@ class TestMapResource:
         assert node["type"] == "Network"
         assert node["properties"]["network_type"] == "public"
         assert node["properties"]["network_name"] == "IGW-main-igw"
+        assert node["properties"]["ip_version"] == 4
 
         # Metadata
         md = node["metadata"]
         assert md["original_resource_type"] == "aws_internet_gateway"
         assert md["original_resource_name"] == "gw[0]"
         assert md["aws_component_type"] == "InternetGateway"
-        assert "AWS Internet Gateway" in md["description"]
+        assert md["aws_gateway_type"] == "standard"
+        assert md["aws_traffic_direction"] == "bidirectional"
+        assert md["aws_ip_version_support"] == "ipv4_ipv6"
+        assert "AWS Internet Gateway providing bidirectional" in md["description"]
         assert md["aws_provider"].startswith("registry.terraform.io")
         assert md["aws_vpc_id"] == "vpc-123"
         assert md["aws_region"] == "eu-west-1"
@@ -211,7 +219,7 @@ class TestMapResource:
         data = {"values": {"region": "eu-west-1", "tags": {"env": "dev"}}}
         m.map_resource("aws_internet_gateway.simple", "aws_internet_gateway", data, b)
         node = b.nodes["aws_internet_gateway_simple"]
-        assert node["properties"]["network_name"] == "INTERNET"
+        assert node["properties"]["network_name"] == "IGW-simple"
         assert node["properties"]["network_type"] == "public"
 
     def test_plain_resource_name_no_dot_original_name(self) -> None:
@@ -221,3 +229,94 @@ class TestMapResource:
         m.map_resource("igw1", "aws_internet_gateway", data, b)
         node = b.nodes["aws_internet_gateway_igw1"]
         assert node["metadata"]["original_resource_name"] == "igw1"
+
+    def test_map_egress_only_igw_with_dependency(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test mapping of aws_egress_only_internet_gateway with specific metadata."""
+        m = AWSInternetGatewayMapper()
+        b = FakeBuilder()
+        res_name = "aws_egress_only_internet_gateway.egress"
+        res_type = "aws_egress_only_internet_gateway"
+        data = {
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "values": {
+                "vpc_id": "vpc-456",
+                "region": "us-east-1",
+                "tags": {"Name": "egress-gw", "purpose": "ipv6-outbound"},
+            },
+        }
+
+        class FakeTerraformMapper:
+            def __init__(self, parsed: dict[str, Any]) -> None:
+                self._parsed = parsed
+
+            def get_current_parsed_data(self) -> dict[str, Any]:
+                return self._parsed
+
+            @staticmethod
+            def extract_terraform_references(
+                res: dict[str, Any], parsed: dict[str, Any]
+            ):
+                return [("vpc_id", "aws_vpc.main", "tosca.DependsOn")]
+
+            def run(self) -> None:
+                m.map_resource(res_name, res_type, data, b)
+
+        monkeypatch.setattr(
+            igw_mod, "TerraformMapper", FakeTerraformMapper, raising=True
+        )
+
+        FakeTerraformMapper({"ok": True}).run()
+
+        node_name = "aws_egress_only_internet_gateway_egress"
+        assert node_name in b.nodes
+        node = b.nodes[node_name]
+
+        # Type and properties specific to egress-only gateway
+        assert node["type"] == "Network"
+        assert node["properties"]["network_type"] == "egress_only"
+        assert node["properties"]["network_name"] == "EIGW-egress-gw"
+        assert node["properties"]["ip_version"] == 6
+
+        # Metadata specific to egress-only gateway
+        md = node["metadata"]
+        assert md["original_resource_type"] == "aws_egress_only_internet_gateway"
+        assert md["original_resource_name"] == "egress"
+        assert md["aws_component_type"] == "EgressOnlyInternetGateway"
+        assert md["aws_gateway_type"] == "egress_only"
+        assert md["aws_traffic_direction"] == "outbound_only"
+        assert md["aws_ip_version_support"] == "ipv6_only"
+        assert (
+            "Egress-only Internet Gateway providing IPv6 outbound" in md["description"]
+        )
+        assert md["aws_provider"].startswith("registry.terraform.io")
+        assert md["aws_region"] == "us-east-1"
+        assert md["aws_tags"]["purpose"] == "ipv6-outbound"
+        assert md["aws_name"] == "egress-gw"
+
+        # Capability
+        assert "link" in node["capabilities"]
+
+        # Dependency requirement to VPC
+        reqs = node["requirements"]
+        assert len(reqs) == 1
+        dep = reqs[0]["dependency"]
+        assert dep["node"] == "aws_vpc_main"
+        assert dep["relationship"] == "DependsOn"
+
+    def test_map_egress_only_igw_without_name_tag(self) -> None:
+        """Test egress-only gateway without Name tag uses default naming."""
+        m = AWSInternetGatewayMapper()
+        b = FakeBuilder()
+        data = {"values": {"region": "eu-west-1", "tags": {"env": "test"}}}
+        m.map_resource(
+            "aws_egress_only_internet_gateway.test",
+            "aws_egress_only_internet_gateway",
+            data,
+            b,
+        )
+        node = b.nodes["aws_egress_only_internet_gateway_test"]
+        assert node["properties"]["network_name"] == "EIGW-test"
+        assert node["properties"]["network_type"] == "egress_only"
+        assert node["properties"]["ip_version"] == 6

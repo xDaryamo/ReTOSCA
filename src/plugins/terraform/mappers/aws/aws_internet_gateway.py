@@ -13,16 +13,22 @@ logger = logging.getLogger(__name__)
 
 
 class AWSInternetGatewayMapper(SingleResourceMapper):
-    """Map a Terraform 'aws_internet_gateway' resource to a TOSCA Root node.
+    """Map Terraform Internet Gateway resources to TOSCA Network nodes.
 
-    An Internet Gateway provides internet connectivity to a VPC.
-    Since TOSCA doesn't have a specific Gateway type, we use Root with
-    appropriate capabilities and metadata.
+    Supports both:
+    - aws_internet_gateway: Provides bidirectional internet connectivity to a VPC
+    - aws_egress_only_internet_gateway: Provides IPv6 egress-only connectivity
+
+    Both are mapped to Network nodes with specific metadata to distinguish
+    their capabilities.
     """
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
-        """Return True for resource type 'aws_internet_gateway'."""
-        return resource_type == "aws_internet_gateway"
+        """Return True for Internet Gateway resource types."""
+        return resource_type in [
+            "aws_internet_gateway",
+            "aws_egress_only_internet_gateway",
+        ]
 
     def map_resource(
         self,
@@ -31,15 +37,22 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
     ) -> None:
-        """Translate an aws_internet_gateway resource into a TOSCA Root node.
+        """Translate Internet Gateway resources into TOSCA Network nodes.
 
         Args:
             resource_name: resource name (e.g. 'aws_internet_gateway.gw')
-            resource_type: resource type (always 'aws_internet_gateway')
+            resource_type: resource type ('aws_internet_gateway' or
+                          'aws_egress_only_internet_gateway')
             resource_data: resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
         """
-        logger.info("Mapping Internet Gateway resource: '%s'", resource_name)
+        # Determine gateway type for logging
+        is_egress_only = resource_type == "aws_egress_only_internet_gateway"
+        gateway_type = (
+            "Egress-only Internet Gateway" if is_egress_only else "Internet Gateway"
+        )
+
+        logger.info("Mapping %s resource: '%s'", gateway_type, resource_name)
 
         # Validate input data
         values = resource_data.get("values", {})
@@ -69,8 +82,24 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
         # Original resource information
         metadata["original_resource_type"] = resource_type
         metadata["original_resource_name"] = clean_name
-        metadata["aws_component_type"] = "InternetGateway"
-        metadata["description"] = "AWS Internet Gateway providing internet connectivity"
+
+        # Specific metadata based on gateway type
+        if is_egress_only:
+            metadata["aws_component_type"] = "EgressOnlyInternetGateway"
+            metadata["description"] = (
+                "AWS Egress-only Internet Gateway providing IPv6 outbound connectivity"
+            )
+            metadata["aws_gateway_type"] = "egress_only"
+            metadata["aws_traffic_direction"] = "outbound_only"
+            metadata["aws_ip_version_support"] = "ipv6_only"
+        else:
+            metadata["aws_component_type"] = "InternetGateway"
+            metadata["description"] = (
+                "AWS Internet Gateway providing bidirectional internet connectivity"
+            )
+            metadata["aws_gateway_type"] = "standard"
+            metadata["aws_traffic_direction"] = "bidirectional"
+            metadata["aws_ip_version_support"] = "ipv4_ipv6"
 
         # Information from resource_data if available
         provider_name = resource_data.get("provider_name")
@@ -98,14 +127,23 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
         # Attach collected metadata to the node
         igw_node.with_metadata(metadata)
 
-        # Set Network properties appropriate for an Internet Gateway
-        # This represents a public internet connection
-        igw_node.with_property("network_name", "INTERNET")
-        igw_node.with_property("network_type", "public")
+        # Set Network properties based on gateway type
+        if is_egress_only:
+            # Egress-only gateway is for IPv6 outbound traffic only
+            igw_node.with_property("network_type", "egress_only")
+            igw_node.with_property("ip_version", 6)  # IPv6 only
+            base_name = "EIGW"
+        else:
+            # Standard Internet Gateway for bidirectional traffic
+            igw_node.with_property("network_type", "public")
+            igw_node.with_property("ip_version", 4)  # Primary IPv4 support
+            base_name = "IGW"
 
         # Use Name tag if available, otherwise use a descriptive name
         if tags and "Name" in tags:
-            igw_node.with_property("network_name", f"IGW-{tags['Name']}")
+            igw_node.with_property("network_name", f"{base_name}-{tags['Name']}")
+        else:
+            igw_node.with_property("network_name", f"{base_name}-{clean_name}")
 
         # Add the standard 'link' capability for Network nodes
         igw_node.add_capability("link").and_node()
@@ -113,18 +151,24 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
         # Detect VPC dependency using the Terraform reference system
         self._add_vpc_dependency(igw_node, resource_data, node_name)
 
-        logger.debug("Internet Gateway node '%s' created successfully.", node_name)
+        logger.debug("%s node '%s' created successfully.", gateway_type, node_name)
 
         # Debug: mapped properties
         logger.debug(
             "Mapped properties for '%s':\n"
+            "  - Gateway Type: %s\n"
             "  - VPC ID: %s\n"
             "  - Region: %s\n"
-            "  - Tags: %s",
+            "  - Tags: %s\n"
+            "  - Traffic Direction: %s\n"
+            "  - IP Version Support: %s",
             node_name,
+            metadata.get("aws_gateway_type", "unknown"),
             vpc_id,
             region,
             tags,
+            metadata.get("aws_traffic_direction", "unknown"),
+            metadata.get("aws_ip_version_support", "unknown"),
         )
 
     def _add_vpc_dependency(
