@@ -79,9 +79,19 @@ class TerraformOrchestrator(BaseOrchestrator):
         self._mapper.register_mapper("aws_db_instance", AWSDBInstanceMapper())
 
         # Register the mapper for AWS Internet Gateway
+        # (supports both standard and egress-only)
         from .mappers.aws.aws_internet_gateway import AWSInternetGatewayMapper
 
-        self._mapper.register_mapper("aws_internet_gateway", AWSInternetGatewayMapper())
+        internet_gateway_mapper = AWSInternetGatewayMapper()
+        self._mapper.register_mapper("aws_internet_gateway", internet_gateway_mapper)
+        self._mapper.register_mapper(
+            "aws_egress_only_internet_gateway", internet_gateway_mapper
+        )
+
+        # Register the mapper for AWS Route Table
+        from .mappers.aws.aws_route_table import AWSRouteTableMapper
+
+        self._mapper.register_mapper("aws_route_table", AWSRouteTableMapper())
 
         self._logger.info("Registration completed.")
 
