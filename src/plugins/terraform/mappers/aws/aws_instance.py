@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
@@ -186,6 +187,52 @@ class AWSInstanceMapper(SingleResourceMapper):
                 "memory_gb": 256,
                 "network_performance": "50 Gigabit",
             },
+            # C6a instances - Compute Optimized (AMD)
+            "c6a.large": {
+                "vcpu": 2,
+                "memory_gb": 4,
+                "network_performance": "Up to 12.5 Gigabit",
+            },
+            "c6a.xlarge": {
+                "vcpu": 4,
+                "memory_gb": 8,
+                "network_performance": "Up to 12.5 Gigabit",
+            },
+            "c6a.2xlarge": {
+                "vcpu": 8,
+                "memory_gb": 16,
+                "network_performance": "Up to 12.5 Gigabit",
+            },
+            "c6a.4xlarge": {
+                "vcpu": 16,
+                "memory_gb": 32,
+                "network_performance": "Up to 12.5 Gigabit",
+            },
+            "c6a.8xlarge": {
+                "vcpu": 32,
+                "memory_gb": 64,
+                "network_performance": "12.5 Gigabit",
+            },
+            "c6a.12xlarge": {
+                "vcpu": 48,
+                "memory_gb": 96,
+                "network_performance": "18.75 Gigabit",
+            },
+            "c6a.16xlarge": {
+                "vcpu": 64,
+                "memory_gb": 128,
+                "network_performance": "25 Gigabit",
+            },
+            "c6a.24xlarge": {
+                "vcpu": 96,
+                "memory_gb": 192,
+                "network_performance": "37.5 Gigabit",
+            },
+            "c6a.32xlarge": {
+                "vcpu": 128,
+                "memory_gb": 256,
+                "network_performance": "50 Gigabit",
+            },
             # R6i instances - Memory Optimized (Intel)
             "r6i.large": {
                 "vcpu": 2,
@@ -274,9 +321,10 @@ class AWSInstanceMapper(SingleResourceMapper):
         ami = values.get("ami")
         instance_type = values.get("instance_type")
         region = values.get("region")
+        cpu_options = values.get("cpu_options", [])
 
-        # Infer compute capabilities from the AWS instance type
-        self._add_compute_capabilities(compute_node, instance_type, ami)
+        # Infer compute capabilities from the AWS instance type and cpu_options
+        self._add_compute_capabilities(compute_node, instance_type, ami, cpu_options)
 
         # Build comprehensive metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
@@ -348,6 +396,10 @@ class AWSInstanceMapper(SingleResourceMapper):
 
         # Update the node metadata with the additional information
         compute_node.with_metadata(metadata)
+
+        # Add subnet dependency if present
+        self._add_subnet_dependency(compute_node, resource_data, node_name)
+
         logger.debug("EC2 Compute node '%s' created successfully.", node_name)
 
         # Debug: mapped properties
@@ -368,8 +420,15 @@ class AWSInstanceMapper(SingleResourceMapper):
         compute_node,
         instance_type: str,
         ami: str | None = None,
+        cpu_options: list[dict[str, Any]] | None = None,
     ) -> None:
         """Add capabilities to the Compute node based on the instance type.
+
+        Args:
+            compute_node: The TOSCA compute node to enhance
+            instance_type: AWS instance type (e.g., 'c6a.2xlarge')
+            ami: AMI ID for OS capability inference
+            cpu_options: List of CPU option dictionaries from Terraform
 
         Only capabilities with meaningful properties are added. Empty
         capabilities are omitted.
@@ -377,6 +436,9 @@ class AWSInstanceMapper(SingleResourceMapper):
         # Capability "host" with instance specifications (always present)
         if instance_type and instance_type in self._instance_specs:
             specs = self._instance_specs[instance_type]
+
+            # Calculate actual vCPU count considering cpu_options override
+            actual_vcpu = self._calculate_actual_vcpu(specs["vcpu"], cpu_options)
 
             # Use GB instead of MB for readability
             memory_gb = specs["memory_gb"]
@@ -387,7 +449,7 @@ class AWSInstanceMapper(SingleResourceMapper):
 
             (
                 compute_node.add_capability("host")
-                .with_property("num_cpus", specs["vcpu"])
+                .with_property("num_cpus", actual_vcpu)
                 .with_property("mem_size", mem_size)
                 .and_node()
             )
@@ -395,7 +457,7 @@ class AWSInstanceMapper(SingleResourceMapper):
             logger.debug(
                 "Configured capabilities for '%s': %s vCPU, %s GB RAM",
                 instance_type,
-                specs["vcpu"],
+                actual_vcpu,
                 memory_gb,
             )
         else:
@@ -420,8 +482,48 @@ class AWSInstanceMapper(SingleResourceMapper):
 
         # Do not add empty capabilities (endpoint, scalable, binding)
 
+    def _calculate_actual_vcpu(
+        self,
+        default_vcpu: int,
+        cpu_options: list[dict[str, Any]] | None,
+    ) -> int:
+        """Calculate actual vCPU count considering cpu_options override.
+
+        Args:
+            default_vcpu: Default vCPU count for the instance type
+            cpu_options: List of CPU option dictionaries from Terraform
+
+        Returns:
+            Actual vCPU count (core_count * threads_per_core)
+        """
+        if not cpu_options or len(cpu_options) == 0:
+            return default_vcpu
+
+        # AWS cpu_options is typically a single element list
+        cpu_config = cpu_options[0] if isinstance(cpu_options, list) else cpu_options
+
+        # Extract core_count and threads_per_core
+        core_count = cpu_config.get("core_count")
+        threads_per_core = cpu_config.get("threads_per_core")
+
+        if core_count is not None and threads_per_core is not None:
+            actual_vcpu = core_count * threads_per_core
+            logger.debug(
+                "CPU options override: %s cores × %s threads = %s vCPU",
+                core_count,
+                threads_per_core,
+                actual_vcpu,
+            )
+            return actual_vcpu
+
+        logger.debug("No valid cpu_options found, using default vCPU: %s", default_vcpu)
+        return default_vcpu
+
     def _infer_os_from_ami(self, ami: str | None) -> dict[str, str]:
         """Infer operating system properties from the AMI.
+
+        First tries to extract detailed info from the Terraform plan data,
+        then falls back to basic pattern matching on the AMI ID.
 
         Returns:
             A dict with OS properties, empty if unable to infer.
@@ -429,6 +531,159 @@ class AWSInstanceMapper(SingleResourceMapper):
         if not ami:
             return {}
 
+        # Try to get detailed AMI data from Terraform plan
+        os_props = self._extract_ami_data_from_plan(ami)
+        if os_props:
+            return os_props
+
+        # Fallback to basic pattern matching
+        return self._infer_os_from_ami_pattern(ami)
+
+    def _extract_ami_data_from_plan(self, ami: str) -> dict[str, str]:
+        """Extract OS information from AMI data in the Terraform plan.
+
+        Returns:
+            A dict with OS properties extracted from plan data.
+        """
+        # Import here to avoid circular imports
+        import inspect
+
+        from src.plugins.terraform.mapper import TerraformMapper
+
+        # Access the full plan via the TerraformMapper instance found on the call stack
+        parsed_data: dict[str, Any] = {}
+        for frame_info in inspect.stack():
+            frame_locals = frame_info.frame.f_locals
+            if "self" in frame_locals and isinstance(
+                frame_locals["self"], TerraformMapper
+            ):
+                parsed_data = frame_locals["self"].get_current_parsed_data()
+                break
+        else:
+            logger.debug("Could not access parsed_data for AMI information extraction")
+            return {}
+
+        # Look for AMI data in prior_state (where data sources are stored)
+        prior_state = parsed_data.get("prior_state", {})
+        root_module = prior_state.get("values", {}).get("root_module", {})
+        resources = root_module.get("resources", [])
+
+        ami_data = None
+        for resource in resources:
+            if (
+                resource.get("type") == "aws_ami"
+                and resource.get("values", {}).get("id") == ami
+            ):
+                ami_data = resource.get("values", {})
+                break
+
+        if not ami_data:
+            logger.debug("No detailed AMI data found in plan for AMI '%s'", ami)
+            return {}
+
+        os_props: dict[str, str] = {}
+
+        # Extract architecture
+        architecture = ami_data.get("architecture")
+        if architecture:
+            os_props["architecture"] = architecture
+
+        # Extract platform information
+        platform_details = ami_data.get("platform_details", "")
+        platform = ami_data.get("platform", "")
+
+        if platform_details:
+            if "Windows" in platform_details:
+                os_props["type"] = "windows"
+            elif "Linux" in platform_details or "UNIX" in platform_details:
+                os_props["type"] = "linux"
+
+        # Extract distribution and version from name and description
+        name = ami_data.get("name", "")
+        description = ami_data.get("description", "")
+        image_location = ami_data.get("image_location", "")
+
+        # Parse Amazon Linux information
+        if (
+            "al2023" in name.lower()
+            or "amazon linux 2023" in description.lower()
+            or "amazon/" in image_location.lower()
+        ):
+            os_props["type"] = "linux"
+            os_props["distribution"] = "amazon"
+
+            # Extract version from name like
+            # "al2023-ami-2023.8.20250818.0-kernel-6.1-x86_64"
+            version_match = re.search(r"2023\.(\d+)\.(\d+)", name)
+            if version_match:
+                major, minor = version_match.groups()
+                os_props["version"] = f"2023.{major}.{minor}"
+            else:
+                os_props["version"] = "2023.0.0"
+
+        # Parse Ubuntu information
+        elif "ubuntu" in name.lower() or "ubuntu" in description.lower():
+            os_props["type"] = "linux"
+            os_props["distribution"] = "ubuntu"
+
+            # Extract Ubuntu version
+            version_match = re.search(r"(\d{2})\.(\d{2})", name)
+            if version_match:
+                major, minor = version_match.groups()
+                os_props["version"] = f"{major}.{minor}.0"
+
+        # Parse RHEL information
+        elif (
+            "rhel" in name.lower()
+            or "red hat" in description.lower()
+            or "redhat" in description.lower()
+        ):
+            os_props["type"] = "linux"
+            os_props["distribution"] = "rhel"
+
+        # Parse CentOS information
+        elif "centos" in name.lower() or "centos" in description.lower():
+            os_props["type"] = "linux"
+            os_props["distribution"] = "centos"
+
+        # Parse Debian information
+        elif "debian" in name.lower() or "debian" in description.lower():
+            os_props["type"] = "linux"
+            os_props["distribution"] = "debian"
+
+        # Parse Windows information
+        elif (
+            "windows" in name.lower()
+            or "windows" in description.lower()
+            or platform == "windows"
+        ):
+            os_props["type"] = "windows"
+
+            # Try to extract Windows version
+            if "2022" in name or "2022" in description:
+                os_props["version"] = "2022"
+            elif "2019" in name or "2019" in description:
+                os_props["version"] = "2019"
+            elif "2016" in name or "2016" in description:
+                os_props["version"] = "2016"
+
+        # Additional metadata that might be useful are available in AMI data
+        # (hypervisor, boot_mode, ena_support, sriov_net_support) but are not
+        # part of TOSCA OperatingSystem capability standard
+
+        if os_props:
+            logger.debug(
+                "Extracted OS properties from AMI data for '%s': %s", ami, os_props
+            )
+
+        return os_props
+
+    def _infer_os_from_ami_pattern(self, ami: str) -> dict[str, str]:
+        """Fallback method to infer OS from AMI ID pattern.
+
+        Returns:
+            A dict with OS properties inferred from patterns.
+        """
         os_props: dict[str, str] = {}
 
         # Patterns to recognize different AMI types
@@ -465,6 +720,65 @@ class AWSInstanceMapper(SingleResourceMapper):
             os_props["architecture"] = "x86_64"
 
         if os_props:
-            logger.debug("Inferred OS properties from AMI '%s': %s", ami, os_props)
+            logger.debug(
+                "Inferred OS properties from AMI pattern '%s': %s", ami, os_props
+            )
 
         return os_props
+
+    def _add_subnet_dependency(
+        self,
+        compute_node,
+        resource_data: dict[str, Any],
+        node_name: str,
+    ) -> None:
+        """Add dependency relationship to the subnet if detected."""
+        # Import here to avoid circular imports
+        import inspect
+
+        from src.plugins.terraform.mapper import TerraformMapper
+
+        # Access the full plan via the TerraformMapper instance found on the call stack
+        parsed_data: dict[str, Any] = {}
+        for frame_info in inspect.stack():
+            frame_locals = frame_info.frame.f_locals
+            if "self" in frame_locals and isinstance(
+                frame_locals["self"], TerraformMapper
+            ):
+                parsed_data = frame_locals["self"].get_current_parsed_data()
+                break
+        else:
+            logger.debug("Could not access parsed_data for dependency detection")
+            return
+
+        # Extract Terraform references using the static method
+        references = TerraformMapper.extract_terraform_references(
+            resource_data, parsed_data
+        )
+
+        # Look for subnet dependency
+        subnet_dependency_added = False
+        for prop_name, target_resource, relationship_type in references:
+            if prop_name == "subnet_id" and "aws_subnet" in target_resource:
+                # Convert aws_subnet.example -> aws_subnet_example for TOSCA node name
+                target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    target_resource, "aws_subnet"
+                )
+
+                logger.debug(
+                    "Adding subnet dependency: %s -> %s (%s)",
+                    node_name,
+                    target_node_name,
+                    relationship_type,
+                )
+
+                # Add the requirement to connect to the subnet
+                compute_node.add_requirement("dependency").to_node(
+                    target_node_name
+                ).with_relationship("DependsOn").and_node()
+
+                subnet_dependency_added = True
+                break
+
+        if not subnet_dependency_added:
+            logger.debug("No subnet dependency detected for instance '%s'", node_name)

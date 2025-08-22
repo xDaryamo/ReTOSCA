@@ -135,3 +135,111 @@ class TestMap:
         assert oscap is not None
         # distro set
         assert "distribution" in oscap.props or "type" in oscap.props
+
+    def test_cpu_options_override_vcpu_count(self) -> None:
+        """Test that cpu_options override the default vCPU count."""
+        m = AWSInstanceMapper()
+        b = FakeBuilder()
+        data = _mk_parsed(
+            ami="ami-12345",
+            instance_type="c6a.2xlarge",  # Default: 8 vCPU
+            region="us-east-2",
+            cpu_options=[{"core_count": 2, "threads_per_core": 2}],
+        )
+        m.map_resource("aws_instance.test", "aws_instance", data, b)
+        node = b.nodes[0]
+        host = node.caps.get("host")
+        assert host is not None
+        # Should be 2 cores × 2 threads = 4 vCPU, not the default 8
+        assert host.props["num_cpus"] == 4
+
+    def test_cpu_options_disabled_hyperthreading(self) -> None:
+        """Test cpu_options with hyperthreading disabled."""
+        m = AWSInstanceMapper()
+        b = FakeBuilder()
+        data = _mk_parsed(
+            ami="ami-12345",
+            instance_type="c6a.4xlarge",  # Default: 16 vCPU
+            region="us-east-2",
+            cpu_options=[
+                {"core_count": 8, "threads_per_core": 1}  # Hyperthreading disabled
+            ],
+        )
+        m.map_resource("aws_instance.test", "aws_instance", data, b)
+        node = b.nodes[0]
+        host = node.caps.get("host")
+        assert host is not None
+        # Should be 8 cores × 1 thread = 8 vCPU, not the default 16
+        assert host.props["num_cpus"] == 8
+
+    def test_no_cpu_options_uses_default(self) -> None:
+        """Test that without cpu_options, default vCPU count is used."""
+        m = AWSInstanceMapper()
+        b = FakeBuilder()
+        data = _mk_parsed(
+            ami="ami-12345",
+            instance_type="t3.micro",  # Default: 2 vCPU
+            region="us-east-1",
+        )
+        m.map_resource("aws_instance.test", "aws_instance", data, b)
+        node = b.nodes[0]
+        host = node.caps.get("host")
+        assert host is not None
+        # Should use default 2 vCPU
+        assert host.props["num_cpus"] == 2
+
+    def test_empty_cpu_options_uses_default(self) -> None:
+        """Test that empty cpu_options list uses default vCPU count."""
+        m = AWSInstanceMapper()
+        b = FakeBuilder()
+        data = _mk_parsed(
+            ami="ami-12345",
+            instance_type="t3.small",  # Default: 2 vCPU
+            region="us-east-1",
+            cpu_options=[],  # Empty list
+        )
+        m.map_resource("aws_instance.test", "aws_instance", data, b)
+        node = b.nodes[0]
+        host = node.caps.get("host")
+        assert host is not None
+        # Should use default 2 vCPU
+        assert host.props["num_cpus"] == 2
+
+
+class TestCalculateActualVcpu:
+    """Test the _calculate_actual_vcpu method directly."""
+
+    def test_no_cpu_options_returns_default(self) -> None:
+        m = AWSInstanceMapper()
+        result = m._calculate_actual_vcpu(8, None)
+        assert result == 8
+
+    def test_empty_cpu_options_returns_default(self) -> None:
+        m = AWSInstanceMapper()
+        result = m._calculate_actual_vcpu(8, [])
+        assert result == 8
+
+    def test_valid_cpu_options_calculates_correctly(self) -> None:
+        m = AWSInstanceMapper()
+        cpu_options = [{"core_count": 4, "threads_per_core": 2}]
+        result = m._calculate_actual_vcpu(16, cpu_options)
+        assert result == 8  # 4 cores × 2 threads
+
+    def test_cpu_options_dict_instead_of_list(self) -> None:
+        """Test handling cpu_options as dict instead of list."""
+        m = AWSInstanceMapper()
+        cpu_options = {"core_count": 2, "threads_per_core": 1}
+        result = m._calculate_actual_vcpu(4, cpu_options)
+        assert result == 2  # 2 cores × 1 thread
+
+    def test_missing_core_count_returns_default(self) -> None:
+        m = AWSInstanceMapper()
+        cpu_options = [{"threads_per_core": 2}]  # Missing core_count
+        result = m._calculate_actual_vcpu(8, cpu_options)
+        assert result == 8  # Should return default
+
+    def test_missing_threads_per_core_returns_default(self) -> None:
+        m = AWSInstanceMapper()
+        cpu_options = [{"core_count": 4}]  # Missing threads_per_core
+        result = m._calculate_actual_vcpu(8, cpu_options)
+        assert result == 8  # Should return default
