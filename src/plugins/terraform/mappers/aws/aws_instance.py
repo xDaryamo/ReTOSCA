@@ -400,6 +400,9 @@ class AWSInstanceMapper(SingleResourceMapper):
         # Add subnet dependency if present
         self._add_subnet_dependency(compute_node, resource_data, node_name)
 
+        # Add security group dependencies if present
+        self._add_security_group_dependencies(compute_node, resource_data, node_name)
+
         logger.debug("EC2 Compute node '%s' created successfully.", node_name)
 
         # Debug: mapped properties
@@ -782,3 +785,87 @@ class AWSInstanceMapper(SingleResourceMapper):
 
         if not subnet_dependency_added:
             logger.debug("No subnet dependency detected for instance '%s'", node_name)
+
+    def _add_security_group_dependencies(
+        self,
+        compute_node,
+        resource_data: dict[str, Any],
+        node_name: str,
+    ) -> None:
+        """Add dependency relationships to security groups if detected."""
+        # Import here to avoid circular imports
+        import inspect
+
+        from src.plugins.terraform.mapper import TerraformMapper
+
+        # Access the full plan via the TerraformMapper instance found on the call stack
+        parsed_data: dict[str, Any] = {}
+        for frame_info in inspect.stack():
+            frame_locals = frame_info.frame.f_locals
+            if "self" in frame_locals and isinstance(
+                frame_locals["self"], TerraformMapper
+            ):
+                parsed_data = frame_locals["self"].get_current_parsed_data()
+                break
+        else:
+            logger.debug(
+                "Could not access parsed_data for security group dependency detection"
+            )
+            return
+
+        # Extract Terraform references using the static method
+        references = TerraformMapper.extract_terraform_references(
+            resource_data, parsed_data
+        )
+
+        # Look for security group dependencies
+        security_group_dependencies_added = 0
+        added_security_groups = set()  # Keep track of already added security groups
+        for prop_name, target_resource, relationship_type in references:
+            # Check for security group properties
+            sg_props = [
+                "vpc_security_group_ids",
+                "security_groups",
+                "security_group_ids",
+            ]
+            if prop_name in sg_props and "aws_security_group" in target_resource:
+                # Convert aws_security_group.web-sg -> aws_security_group_web_sg
+                # for TOSCA node name
+                target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    target_resource, "aws_security_group"
+                )
+
+                # Avoid adding the same security group dependency multiple times
+                if target_node_name in added_security_groups:
+                    logger.debug(
+                        "Security group dependency already added: %s -> %s, skipping",
+                        node_name,
+                        target_node_name,
+                    )
+                    continue
+
+                logger.debug(
+                    "Adding security group dependency: %s -> %s (%s)",
+                    node_name,
+                    target_node_name,
+                    relationship_type,
+                )
+
+                # Add the requirement to connect to the security group
+                compute_node.add_requirement("dependency").to_node(
+                    target_node_name
+                ).with_relationship("DependsOn").and_node()
+
+                added_security_groups.add(target_node_name)
+                security_group_dependencies_added += 1
+
+        if security_group_dependencies_added == 0:
+            logger.debug(
+                "No security group dependencies detected for instance '%s'", node_name
+            )
+        else:
+            logger.info(
+                "Added %d security group dependencies for instance '%s'",
+                security_group_dependencies_added,
+                node_name,
+            )
