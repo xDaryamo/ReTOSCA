@@ -98,6 +98,11 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         self._mapper.register_mapper("aws_iam_role", AWSIAMRoleMapper())
 
+        # Register the mapper for AWS IAM Policy
+        from .mappers.aws.aws_iam_policy import AWSIAMPolicyMapper
+
+        self._mapper.register_mapper("aws_iam_policy", AWSIAMPolicyMapper())
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:
