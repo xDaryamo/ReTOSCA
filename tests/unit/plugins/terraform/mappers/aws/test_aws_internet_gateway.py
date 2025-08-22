@@ -8,13 +8,9 @@ from typing import Any
 import pytest
 
 import src.plugins.terraform.mappers.aws.aws_internet_gateway as igw_mod
-
-# ⬇️ Adjust import to your project structure
 from src.plugins.terraform.mappers.aws.aws_internet_gateway import (
     AWSInternetGatewayMapper,
 )
-
-# -------------------- Fakes / helpers --------------------
 
 
 class FakeRequirementBuilder:
@@ -95,9 +91,6 @@ class FakeBuilder:
 
     def add_node(self, name: str, node_type: str) -> FakeNodeBuilder:
         return FakeNodeBuilder(name, node_type, self.nodes)
-
-
-# --------------------------- Tests ---------------------------
 
 
 class TestCanMap:

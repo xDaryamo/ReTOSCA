@@ -93,6 +93,11 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         self._mapper.register_mapper("aws_route_table", AWSRouteTableMapper())
 
+        # Register the mapper for AWS IAM Role
+        from .mappers.aws.aws_iam_role import AWSIAMRoleMapper
+
+        self._mapper.register_mapper("aws_iam_role", AWSIAMRoleMapper())
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:
