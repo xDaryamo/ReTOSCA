@@ -143,17 +143,17 @@ class AWSVPCMapper(SingleResourceMapper):
         if ipv6_netmask_length is not None:
             metadata["aws_ipv6_netmask_length"] = ipv6_netmask_length
 
-        # Terraform tags
+        # AWS VPC tags
         tags = values.get("tags", {})
         if tags:
-            metadata["terraform_tags"] = tags
+            metadata["aws_tags"] = tags
 
         # Extract additional AWS info for extra metadata
 
         # Tags_all (all tags including provider defaults)
         tags_all = values.get("tags_all", {})
         if tags_all and tags_all != tags:
-            metadata["terraform_tags_all"] = tags_all
+            metadata["aws_tags_all"] = tags_all
 
         # Default security group ID (populated after creation)
         default_security_group_id = values.get("default_security_group_id")

@@ -120,7 +120,7 @@ class TestMap:
         )
         m.map_resource("aws_instance.s", "aws_instance", data, b)
         node = b.nodes[0]
-        assert node.meta.get("terraform_tags_all") == {"a": "1", "b": "2"}
+        assert node.meta.get("aws_tags_all") == {"a": "1", "b": "2"}
 
     def test_os_inferred_from_ami(self) -> None:
         m = AWSInstanceMapper()

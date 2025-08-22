@@ -85,7 +85,7 @@ class TestMap:
         assert md["aws_instance_tenancy"] == "default"
         assert md["aws_enable_dns_hostnames"] is True
         assert md["aws_enable_dns_support"] is True
-        assert md["terraform_tags"] == {"env": "dev"}
+        assert md["aws_tags"] == {"env": "dev"}
 
     def test_ipv6_only_sets_v6(self) -> None:
         m = AWSVPCMapper()
@@ -115,7 +115,7 @@ class TestMap:
         data = _vals(tags={"a": "1"}, tags_all={"a": "1", "b": "2"})
         m.map_resource("aws_vpc.t", "aws_vpc", data, b)
         n = b.nodes[0]
-        assert n.meta.get("terraform_tags_all") == {"a": "1", "b": "2"}
+        assert n.meta.get("aws_tags_all") == {"a": "1", "b": "2"}
 
     def test_default_ids_to_meta(self) -> None:
         m = AWSVPCMapper()

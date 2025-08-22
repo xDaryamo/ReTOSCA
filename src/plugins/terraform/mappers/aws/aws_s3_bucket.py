@@ -76,7 +76,7 @@ class AWSS3BucketMapper(SingleResourceMapper):
         if tags:
             metadata["aws_tags"] = tags
         tags_all = values.get("tags_all", {})
-        if tags_all:
+        if tags_all and tags_all != tags:
             metadata["aws_tags_all"] = tags_all
         bucket_domain_name = values.get("bucket_domain_name")
         if bucket_domain_name:

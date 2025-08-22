@@ -267,6 +267,11 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         if tags:
             metadata["aws_tags"] = tags
 
+        # Tags_all (all tags including provider defaults)
+        tags_all = values.get("tags_all", {})
+        if tags_all and tags_all != tags:
+            metadata["aws_tags_all"] = tags_all
+
         # Attach metadata to the node
         dbms_node.with_metadata(metadata)
 
@@ -383,6 +388,11 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         tags = values.get("tags", {})
         if tags:
             metadata["aws_tags"] = tags
+
+        # Tags_all (all tags including provider defaults)
+        tags_all = values.get("tags_all", {})
+        if tags_all and tags_all != tags:
+            metadata["aws_tags_all"] = tags_all
 
         # Attach metadata to the node
         database_node.with_metadata(metadata)

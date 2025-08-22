@@ -101,6 +101,11 @@ class AWSRouteTableMapper(SingleResourceMapper):
             if "Name" in tags:
                 metadata["aws_name"] = tags["Name"]
 
+        # Tags_all (all tags including provider defaults)
+        tags_all = values.get("tags_all", {})
+        if tags_all and tags_all != tags:
+            metadata["aws_tags_all"] = tags_all
+
         # Additional AWS properties that might be available
         region = values.get("region")
         if region:

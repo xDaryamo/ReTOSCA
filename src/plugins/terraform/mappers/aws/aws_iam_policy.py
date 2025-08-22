@@ -135,7 +135,7 @@ class AWSIAMPolicyMapper(SingleResourceMapper):
             metadata["aws_attachment_count"] = attachment_count
 
         tags_all = values.get("tags_all", {})
-        if tags_all:
+        if tags_all and tags_all != tags:
             metadata["aws_tags_all"] = tags_all
 
         # Attach collected metadata to the node

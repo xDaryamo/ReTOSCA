@@ -392,7 +392,7 @@ class AWSInstanceMapper(SingleResourceMapper):
         # tags_all (all tags including provider-level tags)
         tags_all = values.get("tags_all", {})
         if tags_all and tags_all != tags:
-            metadata["terraform_tags_all"] = tags_all
+            metadata["aws_tags_all"] = tags_all
 
         # Update the node metadata with the additional information
         compute_node.with_metadata(metadata)

@@ -108,6 +108,11 @@ class AWSSubnetMapper(SingleResourceMapper):
                 subnet_node.with_property("network_name", tags["Name"])
             metadata["aws_tags"] = tags
 
+        # Tags_all (all tags including provider defaults)
+        tags_all = values.get("tags_all", {})
+        if tags_all and tags_all != tags:
+            metadata["aws_tags_all"] = tags_all
+
         # Customer-owned IP pool (only for Outpost subnets)
         customer_owned_ipv4_pool = values.get("customer_owned_ipv4_pool")
         if customer_owned_ipv4_pool:
