@@ -23,6 +23,42 @@ class AWSInstanceMapper(SingleResourceMapper):
         # Database of AWS instance type specifications
         # Based on: https://aws.amazon.com/ec2/instance-types/
         self._instance_specs = {
+            # T2 instances - Burstable Performance (previous generation)
+            "t2.nano": {
+                "vcpu": 1,
+                "memory_gb": 0.5,
+                "network_performance": "Low to Moderate",
+            },
+            "t2.micro": {
+                "vcpu": 1,
+                "memory_gb": 1,
+                "network_performance": "Low to Moderate",
+            },
+            "t2.small": {
+                "vcpu": 1,
+                "memory_gb": 2,
+                "network_performance": "Low to Moderate",
+            },
+            "t2.medium": {
+                "vcpu": 2,
+                "memory_gb": 4,
+                "network_performance": "Low to Moderate",
+            },
+            "t2.large": {
+                "vcpu": 2,
+                "memory_gb": 8,
+                "network_performance": "Low to Moderate",
+            },
+            "t2.xlarge": {
+                "vcpu": 4,
+                "memory_gb": 16,
+                "network_performance": "Moderate",
+            },
+            "t2.2xlarge": {
+                "vcpu": 8,
+                "memory_gb": 32,
+                "network_performance": "Moderate",
+            },
             # T3 instances - Burstable Performance
             "t3.nano": {
                 "vcpu": 2,
@@ -402,6 +438,9 @@ class AWSInstanceMapper(SingleResourceMapper):
 
         # Add security group dependencies if present
         self._add_security_group_dependencies(compute_node, resource_data, node_name)
+
+        # Add EBS volume attachments if present
+        self._add_ebs_volume_attachments(compute_node, resource_data, node_name)
 
         logger.debug("EC2 Compute node '%s' created successfully.", node_name)
 
@@ -869,3 +908,165 @@ class AWSInstanceMapper(SingleResourceMapper):
                 security_group_dependencies_added,
                 node_name,
             )
+
+    def _add_ebs_volume_attachments(
+        self,
+        compute_node,
+        resource_data: dict[str, Any],
+        node_name: str,
+    ) -> None:
+        """Add local_storage requirements for EBS volume attachments."""
+        logger.debug("Checking for EBS volume attachments for instance '%s'", node_name)
+        # Import here to avoid circular imports
+        import inspect
+
+        from src.plugins.terraform.mapper import TerraformMapper
+
+        # Access the full plan via the TerraformMapper instance found on the call stack
+        parsed_data: dict[str, Any] = {}
+        for frame_info in inspect.stack():
+            frame_locals = frame_info.frame.f_locals
+            if "self" in frame_locals and isinstance(
+                frame_locals["self"], TerraformMapper
+            ):
+                parsed_data = frame_locals["self"].get_current_parsed_data()
+                break
+        else:
+            logger.debug(
+                "Could not access parsed_data for EBS volume attachment detection"
+            )
+            return
+
+        # Get the current instance address
+        instance_address = resource_data.get("address")
+        if not instance_address:
+            logger.debug("No address found for instance resource")
+            return
+
+        # Look for aws_volume_attachment resources that reference this instance
+        planned_values = parsed_data.get("planned_values", {})
+        root_module = planned_values.get("root_module", {})
+        resources = root_module.get("resources", [])
+
+        attachment_count = 0
+        for resource in resources:
+            if resource.get("type") != "aws_volume_attachment":
+                continue
+
+            attachment_address = resource.get("address")
+            attachment_values = resource.get("values", {})
+
+            # Get configuration data to find references
+            configuration = parsed_data.get("configuration", {})
+            config_root_module = configuration.get("root_module", {})
+            config_resources = config_root_module.get("resources", [])
+
+            # Find the configuration for this attachment resource
+            attachment_config = None
+            for config_res in config_resources:
+                if config_res.get("address") == attachment_address:
+                    attachment_config = config_res
+                    break
+
+            if not attachment_config:
+                continue
+
+            # Check if this attachment references our instance
+            expressions = attachment_config.get("expressions", {})
+            instance_id_expr = expressions.get("instance_id", {})
+            volume_id_expr = expressions.get("volume_id", {})
+
+            # Check if the instance_id references our instance
+            instance_references = instance_id_expr.get("references", [])
+            volume_references = volume_id_expr.get("references", [])
+
+            instance_referenced = False
+            volume_address = None
+
+            for ref in instance_references:
+                if ref.startswith(instance_address):
+                    instance_referenced = True
+                    break
+
+            if not instance_referenced:
+                continue
+
+            # Find the volume address
+            for ref in volume_references:
+                if ref.endswith(".id"):
+                    volume_address = ref[:-3]  # Remove .id suffix
+                    break
+                elif "aws_ebs_volume" in ref:
+                    volume_address = ref
+                    break
+
+            if not volume_address:
+                logger.debug(
+                    "Could not determine volume address for attachment %s",
+                    attachment_address,
+                )
+                continue
+
+            # Convert volume address to TOSCA node name
+            volume_node_name = BaseResourceMapper.generate_tosca_node_name(
+                volume_address, "aws_ebs_volume"
+            )
+
+            # Get device name for the attachment
+            device_name = attachment_values.get("device_name")
+            if not device_name:
+                device_name = expressions.get("device_name", {}).get("constant_value")
+
+            logger.debug(
+                "Adding EBS volume attachment: %s -> %s (device: %s)",
+                node_name,
+                volume_node_name,
+                device_name,
+            )
+
+            # Add the local_storage requirement
+            req_builder = (
+                compute_node.add_requirement("local_storage")
+                .to_node(volume_node_name)
+                .with_relationship("AttachesTo")
+            )
+
+            # Generate mount point from device name and add properties
+            if device_name:
+                mount_point = self._generate_mount_point(device_name)
+                req_builder.with_relationship(
+                    {
+                        "type": "AttachesTo",
+                        "properties": {"location": mount_point, "device": device_name},
+                    }
+                )
+            else:
+                # Fallback mount point if device name is not available
+                req_builder.with_relationship(
+                    {"type": "AttachesTo", "properties": {"location": "unspecified"}}
+                )
+
+            req_builder.and_node()
+            attachment_count += 1
+
+        if attachment_count == 0:
+            logger.debug(
+                "No EBS volume attachments detected for instance '%s'", node_name
+            )
+        else:
+            logger.info(
+                "Added %d EBS volume attachment(s) for instance '%s'",
+                attachment_count,
+                node_name,
+            )
+
+    def _generate_mount_point(self, device_name: str) -> str:
+        """Generate a logical mount point from a device name.
+
+        Args:
+            device_name: Device name like '/dev/sdh', '/dev/xvdf', etc.
+
+        Returns:
+            A placeholder string indicating the mount point is unspecified.
+        """
+        return "unspecified"
