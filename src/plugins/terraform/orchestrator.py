@@ -18,6 +18,12 @@ from .mappers.aws.aws_instance import AWSInstanceMapper
 from .mappers.aws.aws_security_group import AWSSecurityGroupMapper
 from .mappers.aws.aws_subnet import AWSSubnetMapper
 from .mappers.aws.aws_vpc import AWSVPCMapper
+from .mappers.aws.aws_vpc_security_group_egress_rule import (
+    AWSVPCSecurityGroupEgressRuleMapper,
+)
+from .mappers.aws.aws_vpc_security_group_ingress_rule import (
+    AWSVPCSecurityGroupIngressRuleMapper,
+)
 from .parser import TerraformParser
 
 logger = logging.getLogger(__name__)
@@ -63,6 +69,16 @@ class TerraformOrchestrator(BaseOrchestrator):
         # Register the mapper for AWS security group
         self._mapper.register_mapper("aws_security_group", AWSSecurityGroupMapper())
 
+        # Register the mappers for AWS security group rules
+        self._mapper.register_mapper(
+            "aws_vpc_security_group_ingress_rule",
+            AWSVPCSecurityGroupIngressRuleMapper(),
+        )
+        self._mapper.register_mapper(
+            "aws_vpc_security_group_egress_rule",
+            AWSVPCSecurityGroupEgressRuleMapper(),
+        )
+
         # Register the mapper for AWS S3 Bucket
         from .mappers.aws.aws_s3_bucket import AWSS3BucketMapper
 
@@ -72,6 +88,13 @@ class TerraformOrchestrator(BaseOrchestrator):
         from .mappers.aws.aws_ebs_volume import AWSEBSVolumeMapper
 
         self._mapper.register_mapper("aws_ebs_volume", AWSEBSVolumeMapper())
+
+        # Register the mapper for AWS Volume Attachment
+        from .mappers.aws.aws_volume_attachment import AWSVolumeAttachmentMapper
+
+        self._mapper.register_mapper(
+            "aws_volume_attachment", AWSVolumeAttachmentMapper()
+        )
 
         # Register the mapper for AWS DB Instance
         from .mappers.aws.aws_db_instance import AWSDBInstanceMapper

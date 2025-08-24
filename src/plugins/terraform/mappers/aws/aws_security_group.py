@@ -110,42 +110,6 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
         if owner_id:
             metadata["aws_owner_id"] = owner_id
 
-        # === Ingress rules ===
-        ingress_rules = values.get("ingress", [])
-        if ingress_rules:
-            metadata["aws_ingress_rules"] = []
-            for _i, rule in enumerate(ingress_rules):
-                rule_metadata = {
-                    "from_port": rule.get("from_port"),
-                    "to_port": rule.get("to_port"),
-                    "protocol": rule.get("protocol"),
-                    "description": rule.get("description", ""),
-                    "cidr_blocks": rule.get("cidr_blocks", []),
-                    "ipv6_cidr_blocks": rule.get("ipv6_cidr_blocks", []),
-                    "prefix_list_ids": rule.get("prefix_list_ids", []),
-                    "security_groups": rule.get("security_groups", []),
-                    "self": rule.get("self", False),
-                }
-                metadata["aws_ingress_rules"].append(rule_metadata)
-
-        # === Egress rules ===
-        egress_rules = values.get("egress", [])
-        if egress_rules:
-            metadata["aws_egress_rules"] = []
-            for _i, rule in enumerate(egress_rules):
-                rule_metadata = {
-                    "from_port": rule.get("from_port"),
-                    "to_port": rule.get("to_port"),
-                    "protocol": rule.get("protocol"),
-                    "description": rule.get("description", ""),
-                    "cidr_blocks": rule.get("cidr_blocks", []),
-                    "ipv6_cidr_blocks": rule.get("ipv6_cidr_blocks", []),
-                    "prefix_list_ids": rule.get("prefix_list_ids", []),
-                    "security_groups": rule.get("security_groups", []),
-                    "self": rule.get("self", False),
-                }
-                metadata["aws_egress_rules"].append(rule_metadata)
-
         # === Optional configurations ===
 
         # Revoke rules on delete
@@ -171,7 +135,8 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
         # Attach all metadata to the node
         sg_node.with_metadata(metadata)
 
-        # Collect all ingress/egress rules from the Terraform plan
+        # VPC dependency detection
+        vpc_dependency_added = False
         # Find the current instance of the TerraformMapper
         for frame_info in inspect.stack():
             frame_locals = frame_info.frame.f_locals
@@ -187,166 +152,6 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
                 "Unable to access Terraform plan data to detect requirements"
             )
 
-        # Collect ingress and egress rules from separate resources
-        ingress_rules_metadata = []
-        egress_rules_metadata = []
-
-        if parsed_data:
-            # Search planned_values for security rules
-            planned_values = parsed_data.get("planned_values", {})
-            root_module = planned_values.get("root_module", {})
-            resources = root_module.get("resources", [])
-
-            # Also search configuration for references
-            configuration = parsed_data.get("configuration", {})
-            config_root_module = configuration.get("root_module", {})
-            config_resources = config_root_module.get("resources", [])
-
-            for resource in resources:
-                resource_type = resource.get("type", "")
-                resource_address = resource.get("address", "")
-                resource_values = resource.get("values", {})
-
-                # Find the matching configuration resource for references
-                config_resource = None
-                for config_res in config_resources:
-                    if config_res.get("address") == resource_address:
-                        config_resource = config_res
-                        break
-
-                config_expressions = (
-                    config_resource.get("expressions", {}) if config_resource else {}
-                )
-
-                # Ingress rules
-                if resource_type == "aws_vpc_security_group_ingress_rule":
-                    # Extract clean rule name
-                    rule_name = (
-                        resource_address.split(".")[-1]
-                        if "." in resource_address
-                        else resource_address
-                    )
-
-                    # Check if this rule belongs to our security group
-                    sg_ref = config_expressions.get("security_group_id", {}).get(
-                        "references", []
-                    )
-                    if sg_ref and any(
-                        f"aws_security_group.{clean_name}" in ref for ref in sg_ref
-                    ):
-                        rule_metadata = {
-                            "rule_id": rule_name,
-                            "from_port": resource_values.get("from_port"),
-                            "to_port": resource_values.get("to_port"),
-                            "protocol": resource_values.get("ip_protocol"),
-                            "description": resource_values.get("description"),
-                        }
-
-                        # Add CIDR blocks
-                        if resource_values.get("cidr_ipv4"):
-                            rule_metadata["cidr_ipv4"] = resource_values["cidr_ipv4"]
-                        if resource_values.get("cidr_ipv6"):
-                            rule_metadata["cidr_ipv6"] = resource_values["cidr_ipv6"]
-
-                        # Check for references in config expressions
-                        cidr_ipv4_refs = config_expressions.get("cidr_ipv4", {}).get(
-                            "references", []
-                        )
-                        if cidr_ipv4_refs:
-                            rule_metadata["cidr_ipv4_ref"] = cidr_ipv4_refs[0]
-
-                        cidr_ipv6_refs = config_expressions.get("cidr_ipv6", {}).get(
-                            "references", []
-                        )
-                        if cidr_ipv6_refs:
-                            rule_metadata["cidr_ipv6_ref"] = cidr_ipv6_refs[0]
-
-                        # Other optional fields
-                        if resource_values.get("prefix_list_id"):
-                            rule_metadata["prefix_list_id"] = resource_values[
-                                "prefix_list_id"
-                            ]
-                        if resource_values.get("referenced_security_group_id"):
-                            rule_metadata["referenced_security_group_id"] = (
-                                resource_values["referenced_security_group_id"]
-                            )
-
-                        ingress_rules_metadata.append(rule_metadata)
-
-                # Egress rules
-                elif resource_type == "aws_vpc_security_group_egress_rule":
-                    # Extract clean rule name
-                    rule_name = (
-                        resource_address.split(".")[-1]
-                        if "." in resource_address
-                        else resource_address
-                    )
-
-                    # Check if this rule belongs to our security group
-                    sg_ref = config_expressions.get("security_group_id", {}).get(
-                        "references", []
-                    )
-                    if sg_ref and any(
-                        f"aws_security_group.{clean_name}" in ref for ref in sg_ref
-                    ):
-                        rule_metadata = {
-                            "rule_id": rule_name,
-                            "from_port": resource_values.get("from_port"),
-                            "to_port": resource_values.get("to_port"),
-                            "protocol": resource_values.get("ip_protocol"),
-                            "description": resource_values.get("description"),
-                        }
-
-                        # Add CIDR blocks
-                        if resource_values.get("cidr_ipv4"):
-                            rule_metadata["cidr_ipv4"] = resource_values["cidr_ipv4"]
-                        if resource_values.get("cidr_ipv6"):
-                            rule_metadata["cidr_ipv6"] = resource_values["cidr_ipv6"]
-
-                        # Check for references in config expressions
-                        cidr_ipv4_refs = config_expressions.get("cidr_ipv4", {}).get(
-                            "references", []
-                        )
-                        if cidr_ipv4_refs:
-                            rule_metadata["cidr_ipv4_ref"] = cidr_ipv4_refs[0]
-
-                        cidr_ipv6_refs = config_expressions.get("cidr_ipv6", {}).get(
-                            "references", []
-                        )
-                        if cidr_ipv6_refs:
-                            rule_metadata["cidr_ipv6_ref"] = cidr_ipv6_refs[0]
-
-                        # Other optional fields
-                        if resource_values.get("prefix_list_id"):
-                            rule_metadata["prefix_list_id"] = resource_values[
-                                "prefix_list_id"
-                            ]
-                        if resource_values.get("referenced_security_group_id"):
-                            rule_metadata["referenced_security_group_id"] = (
-                                resource_values["referenced_security_group_id"]
-                            )
-
-                        egress_rules_metadata.append(rule_metadata)
-
-        # Attach collected rules to metadata
-        if ingress_rules_metadata:
-            metadata["ingress_rules"] = ingress_rules_metadata
-            logger.info(
-                "Found %d ingress rules for Security Group '%s',",
-                len(ingress_rules_metadata),
-                clean_name,
-            )
-
-        if egress_rules_metadata:
-            metadata["egress_rules"] = egress_rules_metadata
-            logger.info(
-                "Found %d egress rules for Security Group '%s',",
-                len(egress_rules_metadata),
-                clean_name,
-            )
-
-        # VPC dependency detection
-        vpc_dependency_added = False
         if parsed_data:
             terraform_refs = TerraformMapper.extract_terraform_references(
                 resource_data, parsed_data
@@ -383,18 +188,10 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
             "  - Name: %s\n"
             "  - Description: %s\n"
             "  - VPC ID: %s\n"
-            "  - Ingress rules (legacy): %d\n"
-            "  - Egress rules (legacy): %d\n"
-            "  - Ingress rules (separate): %d\n"
-            "  - Egress rules (separate): %d\n"
             "  - Tags: %s",
             node_name,
             sg_name,
             description,
             vpc_id,
-            len(ingress_rules) if ingress_rules else 0,
-            len(egress_rules) if egress_rules else 0,
-            len(ingress_rules_metadata),
-            len(egress_rules_metadata),
             tags,
         )

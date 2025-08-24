@@ -8,6 +8,12 @@ from src.plugins.terraform.mapper import TerraformMapper
 from src.plugins.terraform.mappers.aws.aws_security_group import (
     AWSSecurityGroupMapper,
 )
+from src.plugins.terraform.mappers.aws.aws_vpc_security_group_egress_rule import (
+    AWSVPCSecurityGroupEgressRuleMapper,
+)
+from src.plugins.terraform.mappers.aws.aws_vpc_security_group_ingress_rule import (
+    AWSVPCSecurityGroupIngressRuleMapper,
+)
 
 
 class FakeReq:
@@ -36,11 +42,15 @@ class FakeNode:
         self.node_type = node_type
         self.metadata: dict[str, Any] = {}
         self.requirements: list[tuple[str, str | None, str | None]] = []
+        # Add _data attribute that rule mappers expect
+        self._data: dict[str, Any] = {"metadata": self.metadata}
 
     # Mapper APIs used
     def with_metadata(self, md: dict[str, Any]) -> FakeNode:
         # Store by reference so later mutations are reflected
         self.metadata = md
+        # Also update _data to match
+        self._data["metadata"] = md
         return self
 
     def add_requirement(self, name: str) -> FakeReq:
@@ -55,6 +65,12 @@ class FakeBuilder:
         node = FakeNode(name, node_type)
         self.nodes[name] = node
         return node
+
+    def get_node(self, name: str) -> FakeNode:
+        """Get a node by name (needed by rule mappers)."""
+        if name not in self.nodes:
+            raise KeyError(f"Node '{name}' not found")
+        return self.nodes[name]
 
 
 class Harness(TerraformMapper):
@@ -96,79 +112,19 @@ class TestMapBasic:
         assert b.nodes == {}
         assert any("has no 'values' section" in r.message for r in caplog.records)
 
-    def test_maps_metadata_and_legacy_rules(self) -> None:
-        sg = AWSSecurityGroupMapper()
-        b = FakeBuilder()
-        resource_name = "aws_security_group.allow_tls"
-        values = {
-            "name": "allow-tls",
-            "description": "TLS ingress",
-            "vpc_id": "vpc-123",
-            "arn": "arn:aws:ec2:region:acct:sg/sg-123",
-            "id": "sg-123",
-            "owner_id": "111122223333",
-            "tags": {"env": "dev"},
-            "tags_all": {"env": "dev", "owner": "team"},
-            "ingress": [
-                {
-                    "from_port": 443,
-                    "to_port": 443,
-                    "protocol": "tcp",
-                    "description": "https",
-                    "cidr_blocks": ["0.0.0.0/0"],
-                    "ipv6_cidr_blocks": ["::/0"],
-                    "prefix_list_ids": [],
-                    "security_groups": [],
-                    "self": False,
-                }
-            ],
-            "egress": [
-                {
-                    "from_port": 0,
-                    "to_port": 0,
-                    "protocol": "-1",
-                    "description": "all",
-                    "cidr_blocks": ["0.0.0.0/0"],
-                    "ipv6_cidr_blocks": ["::/0"],
-                    "prefix_list_ids": [],
-                    "security_groups": [],
-                    "self": False,
-                }
-            ],
-        }
-        resource_data = {"values": values}
-
-        sg.map_resource(resource_name, "aws_security_group", resource_data, b)
-
-        node = next(iter(b.nodes.values()))
-        md = node.metadata
-
-        assert node.node_type == "Root"
-        assert md["original_resource_type"] == "aws_security_group"
-        assert md["original_resource_name"] == "allow_tls"
-        assert md["aws_security_group_name"] == "allow-tls"
-        assert md["aws_description"] == "TLS ingress"
-        assert md["aws_vpc_id"] == "vpc-123"
-        assert md["aws_arn"].endswith("sg/sg-123")
-        assert md["aws_security_group_id"] == "sg-123"
-        assert md["aws_owner_id"] == "111122223333"
-        assert md["aws_tags"] == {"env": "dev"}
-        assert md["aws_tags_all"]["owner"] == "team"
-
-        assert isinstance(md.get("aws_ingress_rules"), list)
-        assert isinstance(md.get("aws_egress_rules"), list)
-        assert md["aws_ingress_rules"][0]["from_port"] == 443
-        assert md["aws_egress_rules"][0]["protocol"] == "-1"
-
 
 class TestSeparateRulesAndDependencies:
     def test_collects_separate_rule_resources(self) -> None:
         sg = AWSSecurityGroupMapper()
+        ingress_mapper = AWSVPCSecurityGroupIngressRuleMapper()
+        egress_mapper = AWSVPCSecurityGroupEgressRuleMapper()
         b = FakeBuilder()
         harness = Harness()
 
-        # Use TerraformMapper.map to set current plan in the call stack
+        # Register all three mappers
         harness.register_mapper("aws_security_group", sg)
+        harness.register_mapper("aws_vpc_security_group_ingress_rule", ingress_mapper)
+        harness.register_mapper("aws_vpc_security_group_egress_rule", egress_mapper)
 
         resource_name = "aws_security_group.allow_tls"
         parsed = {
