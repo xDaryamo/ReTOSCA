@@ -304,6 +304,10 @@ class ServiceTemplateBuilder:
         self._node_builders[name] = node_builder
         return node_builder
 
+    def get_node(self, name: str) -> NodeTemplateBuilder | None:
+        """Returns the node builder for the given name if it exists"""
+        return self._node_builders.get(name)
+
     def add_group(self, name: str, group_type: str) -> "GroupBuilder":
         """Adds a group and returns a builder to configure it"""
         return GroupBuilder(self, name, group_type)
