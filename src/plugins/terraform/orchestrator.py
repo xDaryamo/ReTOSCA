@@ -126,6 +126,12 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         self._mapper.register_mapper("aws_iam_policy", AWSIAMPolicyMapper())
 
+        # Register the mapper for AWS Load Balancer
+        from .mappers.aws.aws_lb import AWSLoadBalancerMapper
+
+        aws_lb_mapper = AWSLoadBalancerMapper()
+        self._mapper.register_mapper("aws_lb", aws_lb_mapper)
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:
