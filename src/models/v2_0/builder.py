@@ -379,6 +379,11 @@ class PolicyBuilder:
         self._data["properties"][name] = value
         return self
 
+    def with_metadata(self, metadata: dict[str, Any]) -> "PolicyBuilder":
+        """Adds metadata to the policy"""
+        self._data["metadata"] = metadata
+        return self
+
     def and_service(self) -> ServiceTemplateBuilder:
         """Finalizes the policy and returns to the service template builder"""
         if "policies" not in self.parent._data:
