@@ -28,9 +28,78 @@ class TerraformMapper(BaseResourceMapper):
         parsed_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
     ) -> None:
-        """Override to keep parsed_data available to sub-mappers."""
+        """
+        Override to keep parsed_data available to sub-mappers and handle
+        two-pass processing.
+        """
         self._current_parsed_data = parsed_data
-        super().map(parsed_data, builder)
+
+        # First pass: create all nodes (excluding associations)
+        self._logger.info("Starting first pass: creating all primary resources")
+        resources = list(self._extract_resources(parsed_data))
+
+        # Separate association resources from primary resources
+        primary_resources = []
+        association_resources = []
+
+        for resource_name, resource_type, resource_data in resources:
+            association_types = ["aws_route_table_association", "aws_volume_attachment"]
+            if resource_type in association_types:
+                association_resources.append(
+                    (resource_name, resource_type, resource_data)
+                )
+            else:
+                primary_resources.append((resource_name, resource_type, resource_data))
+
+        # Process primary resources first
+        for resource_name, resource_type, resource_data in primary_resources:
+            self._process_single_resource(
+                resource_name, resource_type, resource_data, builder
+            )
+
+        # Second pass: process associations after all nodes are created
+        if association_resources:
+            self._logger.info(
+                "Starting second pass: processing associations and relationships"
+            )
+            for resource_name, resource_type, resource_data in association_resources:
+                self._process_single_resource(
+                    resource_name, resource_type, resource_data, builder
+                )
+
+        self._logger.info("Resource mapping process completed.")
+
+    def _process_single_resource(
+        self,
+        resource_name: str,
+        resource_type: str,
+        resource_data: dict[str, Any],
+        builder: "ServiceTemplateBuilder",
+    ) -> None:
+        """Process a single resource using the appropriate mapper."""
+        mapper_strategy = self._mappers.get(resource_type)
+
+        if mapper_strategy:
+            # Uses can_map for a finer check
+            if mapper_strategy.can_map(resource_type, resource_data):
+                self._logger.debug(
+                    f"Mapping resource '{resource_name}' ({resource_type})"
+                )
+                # Delegates work to the specific strategy class
+                mapper_strategy.map_resource(
+                    resource_name, resource_type, resource_data, builder
+                )
+            else:
+                self._logger.warning(
+                    f"The mapper for '{resource_type}' cannot handle "
+                    f"the specific configuration of '{resource_name}'. "
+                    "Skipping."
+                )
+        else:
+            self._logger.warning(
+                f"No mapper registered for resource type: '{resource_type}'. "
+                "Skipping."
+            )
 
     def get_current_parsed_data(self) -> dict[str, Any]:
         """Return current plan data for sub-mappers."""

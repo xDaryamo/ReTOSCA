@@ -96,10 +96,24 @@ class TerraformOrchestrator(BaseOrchestrator):
             "aws_volume_attachment", AWSVolumeAttachmentMapper()
         )
 
+        # Register the mapper for AWS Route Table Association
+        from .mappers.aws.aws_route_table_association import (
+            AWSRouteTableAssociationMapper,
+        )
+
+        self._mapper.register_mapper(
+            "aws_route_table_association", AWSRouteTableAssociationMapper()
+        )
+
         # Register the mapper for AWS DB Instance
         from .mappers.aws.aws_db_instance import AWSDBInstanceMapper
 
         self._mapper.register_mapper("aws_db_instance", AWSDBInstanceMapper())
+
+        # Register the mapper for AWS DB Subnet Group
+        from .mappers.aws.aws_db_subnet_group import AWSDBSubnetGroupMapper
+
+        self._mapper.register_mapper("aws_db_subnet_group", AWSDBSubnetGroupMapper())
 
         # Register the mapper for AWS Internet Gateway
         # (supports both standard and egress-only)

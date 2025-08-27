@@ -132,6 +132,90 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
         if tags_all and tags_all != tags:
             metadata["aws_tags_all"] = tags_all
 
+        # === Security Group Rules ===
+
+        # Ingress rules
+        ingress_rules = values.get("ingress", [])
+        if ingress_rules:
+            processed_ingress = []
+            for rule in ingress_rules:
+                rule_data = {
+                    "from_port": rule.get("from_port"),
+                    "to_port": rule.get("to_port"),
+                    "protocol": rule.get("protocol"),
+                }
+
+                # Add description if available
+                if rule.get("description"):
+                    rule_data["description"] = rule.get("description")
+
+                # Add CIDR blocks if available
+                if rule.get("cidr_blocks"):
+                    rule_data["cidr_blocks"] = rule.get("cidr_blocks")
+
+                # Add IPv6 CIDR blocks if available
+                if rule.get("ipv6_cidr_blocks"):
+                    rule_data["ipv6_cidr_blocks"] = rule.get("ipv6_cidr_blocks")
+
+                # Add prefix list IDs if available
+                if rule.get("prefix_list_ids"):
+                    rule_data["prefix_list_ids"] = rule.get("prefix_list_ids")
+
+                # Add security groups if available
+                if rule.get("security_groups"):
+                    rule_data["security_groups"] = rule.get("security_groups")
+
+                # Add self reference if available
+                if rule.get("self") is not None:
+                    rule_data["self"] = rule.get("self")
+
+                processed_ingress.append(rule_data)
+
+            metadata["aws_ingress_rules"] = processed_ingress
+
+        # Egress rules
+        egress_rules = values.get("egress", [])
+        if egress_rules:
+            processed_egress = []
+            for rule in egress_rules:
+                rule_data = {
+                    "from_port": rule.get("from_port"),
+                    "to_port": rule.get("to_port"),
+                    "protocol": rule.get("protocol"),
+                }
+
+                # Add description if available
+                if rule.get("description"):
+                    rule_data["description"] = rule.get("description")
+
+                # Add CIDR blocks if available
+                if rule.get("cidr_blocks"):
+                    rule_data["cidr_blocks"] = rule.get("cidr_blocks")
+
+                # Add IPv6 CIDR blocks if available
+                if rule.get("ipv6_cidr_blocks"):
+                    rule_data["ipv6_cidr_blocks"] = rule.get("ipv6_cidr_blocks")
+
+                # Add prefix list IDs if available
+                if rule.get("prefix_list_ids"):
+                    rule_data["prefix_list_ids"] = rule.get("prefix_list_ids")
+
+                # Add security groups if available
+                if rule.get("security_groups"):
+                    rule_data["security_groups"] = rule.get("security_groups")
+
+                # Add self reference if available
+                if rule.get("self") is not None:
+                    rule_data["self"] = rule.get("self")
+
+                processed_egress.append(rule_data)
+
+            metadata["aws_egress_rules"] = processed_egress
+
+        # Count rules for quick reference
+        metadata["aws_ingress_rule_count"] = len(ingress_rules)
+        metadata["aws_egress_rule_count"] = len(egress_rules)
+
         # Attach all metadata to the node
         sg_node.with_metadata(metadata)
 
@@ -188,10 +272,14 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
             "  - Name: %s\n"
             "  - Description: %s\n"
             "  - VPC ID: %s\n"
-            "  - Tags: %s",
+            "  - Tags: %s\n"
+            "  - Ingress rules: %d\n"
+            "  - Egress rules: %d",
             node_name,
             sg_name,
             description,
             vpc_id,
             tags,
+            len(ingress_rules),
+            len(egress_rules),
         )

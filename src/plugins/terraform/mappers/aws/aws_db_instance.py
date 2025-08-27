@@ -304,10 +304,14 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # Database name
+        # Database name - Required property for Database node
         db_name = values.get("db_name")
         if db_name:
             database_node.with_property("name", db_name)
+        else:
+            # Use identifier or fallback to clean_name if db_name is not specified
+            identifier = values.get("identifier", clean_name)
+            database_node.with_property("name", identifier)
 
         # Port (inherit from DBMS) - Required property for Database node
         port = values.get("port")
