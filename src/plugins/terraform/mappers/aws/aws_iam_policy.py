@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSIAMPolicyMapper(SingleResourceMapper):
+class AWSIAMPolicyMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map a Terraform 'aws_iam_policy' resource to a TOSCA SoftwareComponent node.
 
     IAM Policies are AWS security entities that define permissions and access rules.

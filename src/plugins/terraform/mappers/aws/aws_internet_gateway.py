@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
 from src.plugins.terraform.mapper import TerraformMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSInternetGatewayMapper(SingleResourceMapper):
+class AWSInternetGatewayMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map Terraform Internet Gateway resources to TOSCA Network nodes.
 
     Supports both:

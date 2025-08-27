@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSInstanceMapper(SingleResourceMapper):
+class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map a Terraform 'aws_instance' resource to a TOSCA Compute node."""
 
     def __init__(self):
@@ -20,6 +21,7 @@ class AWSInstanceMapper(SingleResourceMapper):
         The database is a small reference of instance sizes used to infer
         capabilities (vCPU, memory) when possible.
         """
+        super().__init__()
         # Database of AWS instance type specifications
         # Based on: https://aws.amazon.com/ec2/instance-types/
         self._instance_specs = {

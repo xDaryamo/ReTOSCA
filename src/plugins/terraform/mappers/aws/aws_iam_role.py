@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
 from src.plugins.terraform.mapper import TerraformMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSIAMRoleMapper(SingleResourceMapper):
+class AWSIAMRoleMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map a Terraform 'aws_iam_role' resource to a TOSCA SoftwareComponent node.
 
     IAM Roles are AWS security entities that define permissions for accessing
@@ -214,8 +215,7 @@ class AWSIAMRoleMapper(SingleResourceMapper):
                 return str(policy_content)
         except (json.JSONDecodeError, TypeError) as e:
             logger.warning(
-                "Failed to format policy content as JSON: %s. "
-                "Using original content.",
+                "Failed to format policy content as JSON: %s. Using original content.",
                 e,
             )
             return str(policy_content)
@@ -240,8 +240,7 @@ class AWSIAMRoleMapper(SingleResourceMapper):
                 return str(policy_content)
         except (json.JSONDecodeError, TypeError) as e:
             logger.warning(
-                "Failed to format policy content as JSON: %s. "
-                "Using original content.",
+                "Failed to format policy content as JSON: %s. Using original content.",
                 e,
             )
             return str(policy_content)
@@ -266,8 +265,7 @@ class AWSIAMRoleMapper(SingleResourceMapper):
                 return str(policy_content)
         except (json.JSONDecodeError, TypeError) as e:
             logger.warning(
-                "Failed to format policy content as JSON: %s. "
-                "Using original content.",
+                "Failed to format policy content as JSON: %s. Using original content.",
                 e,
             )
             return str(policy_content)
@@ -294,7 +292,7 @@ class AWSIAMRoleMapper(SingleResourceMapper):
                 return str(policy_content)
         except (json.JSONDecodeError, TypeError) as e:
             logger.warning(
-                "Failed to parse policy document as JSON: %s. " "Storing as string.", e
+                "Failed to parse policy document as JSON: %s. Storing as string.", e
             )
             return str(policy_content)
 

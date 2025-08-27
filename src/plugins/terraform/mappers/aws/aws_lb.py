@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
 from src.plugins.terraform.mapper import TerraformMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSLoadBalancerMapper(SingleResourceMapper):
+class AWSLoadBalancerMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map Terraform AWS Load Balancer (aws_lb) resources to TOSCA LoadBalancer nodes.
 
     Supports all AWS Load Balancer types:

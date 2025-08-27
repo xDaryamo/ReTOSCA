@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
 from src.plugins.terraform.mapper import TerraformMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSDBSubnetGroupMapper(SingleResourceMapper):
+class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map a Terraform 'aws_db_subnet_group' resource to a TOSCA Placement policy.
 
     This mapper creates a Placement policy that governs the placement of

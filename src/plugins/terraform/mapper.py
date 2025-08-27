@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 
+from .variables import VariableContext
+
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
 
@@ -22,6 +24,8 @@ class TerraformMapper(BaseResourceMapper):
         super().__init__()
         # Keep the plan data available for sub-mappers
         self._current_parsed_data: dict[str, Any] | None = None
+        # Variable context for handling Terraform variables
+        self._variable_context: VariableContext | None = None
 
     def map(
         self,
@@ -30,9 +34,36 @@ class TerraformMapper(BaseResourceMapper):
     ) -> None:
         """
         Override to keep parsed_data available to sub-mappers and handle
-        two-pass processing.
+        two-pass processing with variable support.
         """
         self._current_parsed_data = parsed_data
+
+        # Initialize variable context
+        self._logger.info("Initializing variable context...")
+        self._variable_context = VariableContext(parsed_data)
+
+        # Add TOSCA inputs from Terraform variables
+        if self._variable_context.has_variables():
+            self._logger.info("Adding TOSCA inputs from Terraform variables")
+            tosca_inputs = self._variable_context.get_tosca_inputs()
+            for input_name, input_def in tosca_inputs.items():
+                builder.with_input(
+                    name=input_name,
+                    param_type=input_def.param_type,
+                    description=input_def.description,
+                    default=input_def.default,
+                    required=input_def.required,
+                )
+                self._logger.debug(
+                    f"Added TOSCA input: {input_name} ({input_def.param_type})"
+                )
+
+            # Log variable usage summary for debugging
+            self._variable_context.log_variable_usage_summary()
+        else:
+            self._logger.info(
+                "No Terraform variables found, skipping TOSCA input generation"
+            )
 
         # First pass: create all nodes (excluding associations)
         self._logger.info("Starting first pass: creating all primary resources")
@@ -80,6 +111,10 @@ class TerraformMapper(BaseResourceMapper):
         mapper_strategy = self._mappers.get(resource_type)
 
         if mapper_strategy:
+            # Set variable context on the mapper if it supports it
+            if hasattr(mapper_strategy, "set_variable_context"):
+                mapper_strategy.set_variable_context(self._variable_context)
+
             # Uses can_map for a finer check
             if mapper_strategy.can_map(resource_type, resource_data):
                 self._logger.debug(
@@ -97,13 +132,16 @@ class TerraformMapper(BaseResourceMapper):
                 )
         else:
             self._logger.warning(
-                f"No mapper registered for resource type: '{resource_type}'. "
-                "Skipping."
+                f"No mapper registered for resource type: '{resource_type}'. Skipping."
             )
 
     def get_current_parsed_data(self) -> dict[str, Any]:
         """Return current plan data for sub-mappers."""
         return self._current_parsed_data or {}
+
+    def get_variable_context(self) -> VariableContext | None:
+        """Return the current variable context for sub-mappers."""
+        return self._variable_context
 
     @staticmethod
     def extract_terraform_references(

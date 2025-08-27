@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSVPCMapper(SingleResourceMapper):
+class AWSVPCMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map a Terraform 'aws_vpc' resource into a tosca.nodes.Network node."""
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:

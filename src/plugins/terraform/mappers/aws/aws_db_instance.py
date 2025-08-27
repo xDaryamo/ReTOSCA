@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
+from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AWSDBInstanceMapper(SingleResourceMapper):
+class AWSDBInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     """Map a Terraform 'aws_db_instance' resource to TOSCA DBMS and Database nodes.
 
     This mapper creates two interconnected nodes:
@@ -20,6 +21,7 @@ class AWSDBInstanceMapper(SingleResourceMapper):
 
     def __init__(self):
         """Initialize the mapper with database engine type mapping."""
+        super().__init__()
         # Mapping from AWS engine names to more standardized types
         self._engine_type_mapping = {
             "mysql": "MySQL",
@@ -304,10 +306,40 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
+        # Get resource address for variable resolution
+        resource_address = resource_data.get("address", f"aws_db_instance.{clean_name}")
+
+        # IMPORTANT: For metadata, always use concrete values (never $get_input)
+        # Store the actual resolved database name in metadata for reference
+        db_name_concrete = self.get_concrete_value(
+            resource_address=resource_address,
+            property_name="db_name",
+            fallback_value=values.get("db_name"),
+        )
+        if db_name_concrete is not None:
+            metadata["aws_database_name"] = db_name_concrete
+
         # Database name - Required property for Database node
-        db_name = values.get("db_name")
-        if db_name:
-            database_node.with_property("name", db_name)
+        # Use variable-aware resolution for db_name
+        db_name_resolved = self.resolve_property_value(
+            resource_address=resource_address,
+            property_name="db_name",
+            fallback_value=values.get("db_name"),
+            context="property",
+        )
+
+        if db_name_resolved is not None:
+            database_node.with_property("name", db_name_resolved)
+            # Log the resolution for debugging
+            if isinstance(db_name_resolved, dict) and "$get_input" in db_name_resolved:
+                logger.debug(
+                    "Property db_name resolved to $get_input:%s (variable-backed)",
+                    db_name_resolved["$get_input"],
+                )
+            else:
+                logger.debug(
+                    f"Property db_name resolved to {db_name_resolved} (concrete value)"
+                )
         else:
             # Use identifier or fallback to clean_name if db_name is not specified
             identifier = values.get("identifier", clean_name)
