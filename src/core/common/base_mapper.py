@@ -27,6 +27,8 @@ class BaseResourceMapper(ResourceMapper, ABC):
         """Initializes the mapper and the strategy registry."""
         self._logger = logger.getChild(self.__class__.__name__)
         self._mappers: dict[str, SingleResourceMapper] = {}
+        # Store relationship mappers for second-pass processing
+        self._relationship_mappers: dict[str, SingleResourceMapper] = {}
 
     @staticmethod
     def generate_tosca_node_name(resource_name: str, resource_type: str) -> str:

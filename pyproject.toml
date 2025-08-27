@@ -63,6 +63,7 @@ warn_unused_ignores = true
 show_error_codes = true
 pretty = true
 ignore_missing_imports = true
+explicit_package_bases = true
 
 
 [tool.pytest.ini_options]

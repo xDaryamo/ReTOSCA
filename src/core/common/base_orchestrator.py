@@ -337,6 +337,10 @@ class BaseOrchestrator(Orchestrator, ABC):
                         for prop_name, prop_value in policy_def.properties.items():
                             policy_builder.with_property(prop_name, prop_value)
 
+                    # Copy metadata if present
+                    if hasattr(policy_def, "metadata") and policy_def.metadata:
+                        policy_builder.with_metadata(policy_def.metadata)
+
                     policy_builder.and_service()
 
         if "workflows" in source_builder._data:
