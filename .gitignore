@@ -201,6 +201,7 @@ terraform.tfstate
 terraform.tfstate.backup
 terraform.tfvars
 terraform.tfvars.json
+terraform-plan.json
 *.tfplan
 *.tfstate
 *.tfstate.*
