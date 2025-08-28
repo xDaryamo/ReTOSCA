@@ -16,14 +16,14 @@ class CapabilityAssignment(ToscaBase):
     properties: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Optional map of property assignments for the capability " "definition."
+            "Optional map of property assignments for the capability definition."
         ),
     )
 
     attributes: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Optional map of attribute assignments for the capability " "definition."
+            "Optional map of attribute assignments for the capability definition."
         ),
     )
 
