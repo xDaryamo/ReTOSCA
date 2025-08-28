@@ -51,8 +51,7 @@ class RequirementAssignment(ToscaBase):
     node_filter: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Node filter definition for selecting a compatible target node "
-            "at runtime."
+            "Node filter definition for selecting a compatible target node at runtime."
         ),
     )
     directives: list[str] | None = Field(

@@ -66,7 +66,7 @@ class NodeTemplate(ToscaBase):
     node_filter: Any | None = Field(
         default=None,
         description=(
-            "Optional node filter definition, used only with the 'select' " "directive."
+            "Optional node filter definition, used only with the 'select' directive."
         ),
     )
     copy_from: str | None = Field(

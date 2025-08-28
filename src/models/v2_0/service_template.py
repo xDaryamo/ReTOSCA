@@ -24,34 +24,30 @@ class ServiceTemplate(ToscaBase):
     inputs: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Optional map of input parameter definitions " "for the service template."
+            "Optional map of input parameter definitions for the service template."
         ),
     )
     outputs: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Optional map of output parameter definitions " "for the service template."
+            "Optional map of output parameter definitions for the service template."
         ),
     )
     node_templates: dict[str, NodeTemplate] = Field(
         ...,
         description=(
-            "Required map of node template definitions " "for the service template."
+            "Required map of node template definitions for the service template."
         ),
     )
     groups: dict[str, GroupDefinition] | None = Field(
         default=None,
-        description=("Optional map of group definitions " "for the service template."),
+        description=("Optional map of group definitions for the service template."),
     )
     policies: list[PolicyDefinition] | None = Field(
         default=None,
-        description=(
-            "Optional list of policy definitions " "for the service template."
-        ),
+        description=("Optional list of policy definitions for the service template."),
     )
     workflows: dict[str, WorkflowDefinition] | None = Field(
         default=None,
-        description=(
-            "Optional map of workflow definitions " "for the service template."
-        ),
+        description=("Optional map of workflow definitions for the service template."),
     )

@@ -27,7 +27,7 @@ class ArtifactDefinition(ToscaBase):
     repository: str | None = Field(
         default=None,
         description=(
-            "Optional name of the external repository used to retrieve the " "artifact."
+            "Optional name of the external repository used to retrieve the artifact."
         ),
     )
 
@@ -43,7 +43,7 @@ class ArtifactDefinition(ToscaBase):
     properties: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Optional map of property assignments associated with the " "artifact."
+            "Optional map of property assignments associated with the artifact."
         ),
     )
 
