@@ -56,6 +56,7 @@ class SingleResourceMapper(Protocol):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: Any = None,
     ) -> None:
         """
         Map a single resource to TOSCA using the builder.
@@ -65,6 +66,8 @@ class SingleResourceMapper(Protocol):
             resource_type: The type/kind of resource (e.g., 'aws_instance')
             resource_data: The resource configuration data
             builder: The ServiceTemplateBuilder to populate with TOSCA resources
+            context: Optional context object containing technology-specific
+                    dependencies (e.g., TerraformMappingContext)
         """
         ...
 

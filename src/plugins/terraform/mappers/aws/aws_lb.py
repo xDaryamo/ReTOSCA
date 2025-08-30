@@ -1,19 +1,17 @@
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.mapper import TerraformMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSLoadBalancerMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSLoadBalancerMapper(SingleResourceMapper):
     """Map Terraform AWS Load Balancer (aws_lb) resources to TOSCA LoadBalancer nodes.
 
     Supports all AWS Load Balancer types:
@@ -32,6 +30,7 @@ class AWSLoadBalancerMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Translate AWS Load Balancer resources into TOSCA LoadBalancer nodes.
 
@@ -85,8 +84,52 @@ class AWSLoadBalancerMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         # Add capabilities based on load balancer type and configuration
         self._add_load_balancer_capabilities(lb_node, values, internal, ip_address_type)
 
-        # Add dependencies (VPC, subnets, security groups)
-        self._add_dependencies(lb_node, resource_data, node_name)
+        # Add dependencies using injected context
+        if context:
+            terraform_refs = context.extract_terraform_references(resource_data)
+            logger.debug(
+                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+            )
+
+            for prop_name, target_ref, relationship_type in terraform_refs:
+                logger.debug(
+                    "Processing reference: %s -> %s (%s)",
+                    prop_name,
+                    target_ref,
+                    relationship_type,
+                )
+
+                if "." in target_ref:
+                    # target_ref is like "aws_subnet.main"
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                        target_ref, target_resource_type
+                    )
+
+                    # Add requirement with the property name as the requirement name
+                    requirement_name = (
+                        prop_name if prop_name not in ["dependency"] else "dependency"
+                    )
+
+                    (
+                        lb_node.add_requirement(requirement_name)
+                        .to_node(target_node_name)
+                        .with_relationship(relationship_type)
+                        .and_node()
+                    )
+
+                    logger.info(
+                        "Added %s requirement '%s' to '%s' with relationship %s",
+                        requirement_name,
+                        target_node_name,
+                        node_name,
+                        relationship_type,
+                    )
+        else:
+            logger.warning(
+                "No context provided to detect dependencies for resource '%s'",
+                resource_name,
+            )
 
         logger.debug("AWS Load Balancer node '%s' created successfully.", node_name)
 
@@ -246,83 +289,6 @@ class AWSLoadBalancerMapper(TerraformResourceMapperMixin, SingleResourceMapper):
             client_capability.with_property("protocol", "tcp")
 
         client_capability.and_node()
-
-    def _add_dependencies(
-        self,
-        lb_node,
-        resource_data: dict[str, Any],
-        node_name: str,
-    ) -> None:
-        """Add dependency relationships to VPC, subnets, and security groups."""
-        # Access the full plan via the TerraformMapper instance
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                terraform_mapper = frame_locals["self"]
-                parsed_data = terraform_mapper.get_current_parsed_data()
-                break
-        else:
-            logger.warning(
-                "Unable to access Terraform plan data to detect dependencies for '%s'",
-                node_name,
-            )
-            return
-
-        if not parsed_data:
-            return
-
-        # Extract Terraform references
-        terraform_refs = TerraformMapper.extract_terraform_references(
-            resource_data, parsed_data
-        )
-
-        added_dependencies = set()
-
-        for prop_name, target_ref, _relationship_type in terraform_refs:
-            # Subnet dependencies
-            if prop_name in ["subnets", "subnet_id"] and "aws_subnet" in target_ref:
-                target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                    target_ref, "aws_subnet"
-                )
-
-                if target_node_name not in added_dependencies:
-                    lb_node.add_requirement("dependency").to_node(
-                        target_node_name
-                    ).with_relationship("DependsOn").and_node()
-
-                    added_dependencies.add(target_node_name)
-                    logger.debug(
-                        "Added subnet dependency: %s -> %s",
-                        node_name,
-                        target_node_name,
-                    )
-
-            # Security group dependencies (ALB and NLB only)
-            elif prop_name == "security_groups" and "aws_security_group" in target_ref:
-                target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                    target_ref, "aws_security_group"
-                )
-
-                if target_node_name not in added_dependencies:
-                    lb_node.add_requirement("dependency").to_node(
-                        target_node_name
-                    ).with_relationship("DependsOn").and_node()
-
-                    added_dependencies.add(target_node_name)
-                    logger.debug(
-                        "Added security group dependency: %s -> %s",
-                        node_name,
-                        target_node_name,
-                    )
-
-        # Add VPC dependency through subnet references
-        # (Load balancers don't directly reference VPC, but inherit it through subnets)
-        logger.debug(
-            "Load balancer dependencies added: %d total", len(added_dependencies)
-        )
 
     def _log_mapped_properties(
         self,

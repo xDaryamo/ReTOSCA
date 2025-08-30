@@ -1,22 +1,18 @@
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.mapper import TerraformMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 
 logger = logging.getLogger(__name__)
 
 
-class AWSVPCSecurityGroupIngressRuleMapper(
-    TerraformResourceMapperMixin, SingleResourceMapper
-):
+class AWSVPCSecurityGroupIngressRuleMapper(SingleResourceMapper):
     """
     Map a Terraform 'aws_vpc_security_group_ingress_rule' resource.
 
@@ -36,6 +32,7 @@ class AWSVPCSecurityGroupIngressRuleMapper(
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """
         Map aws_vpc_security_group_ingress_rule by adding metadata to the
@@ -50,17 +47,16 @@ class AWSVPCSecurityGroupIngressRuleMapper(
         """
         logger.info(f"Processing ingress rule resource: '{resource_name}'")
 
-        # Get access to the full parsed data to find configuration expressions
-        parsed_data = self._get_parsed_data()
-        if not parsed_data:
+        # Check context availability
+        if not context:
             logger.warning(
-                f"Could not access Terraform plan data for '{resource_name}'. Skipping."
+                f"No context provided for ingress rule '{resource_name}'. Skipping."
             )
             return
 
         # Extract security group reference and rule data
         sg_ref, rule_metadata = self._extract_rule_info(
-            resource_name, resource_data, parsed_data
+            resource_name, resource_data, context
         )
         if not sg_ref or not rule_metadata:
             logger.warning(
@@ -84,25 +80,11 @@ class AWSVPCSecurityGroupIngressRuleMapper(
             f"to security group {sg_ref}"
         )
 
-    def _get_parsed_data(self) -> dict[str, Any] | None:
-        """Get access to the full parsed Terraform data."""
-        # Find the current instance of the TerraformMapper
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                terraform_mapper = frame_locals["self"]
-                return terraform_mapper.get_current_parsed_data()
-
-        logger.warning("Unable to access Terraform plan data")
-        return None
-
     def _extract_rule_info(
         self,
         resource_name: str,
         resource_data: dict[str, Any],
-        parsed_data: dict[str, Any],
+        context: "TerraformMappingContext",
     ) -> tuple[str | None, dict[str, Any] | None]:
         """
         Extract security group reference and rule metadata from the resource data.
@@ -123,26 +105,15 @@ class AWSVPCSecurityGroupIngressRuleMapper(
         else:
             rule_id = resource_name
 
-        # Find the configuration resource for references
-        config_resource = self._find_config_resource(resource_name, parsed_data)
-        if not config_resource:
-            return None, None
-
-        # Get expressions from configuration
-        config_expressions = config_resource.get("expressions", {})
+        # Extract Terraform references using context
+        terraform_refs = context.extract_terraform_references(resource_data)
 
         # Look for security_group_id reference
         sg_ref = None
-        sg_id_expr = config_expressions.get("security_group_id", {})
-        if sg_id_expr and "references" in sg_id_expr:
-            references = sg_id_expr["references"]
-            if references and len(references) > 0:
-                # Take the longest reference (most specific)
-                sg_ref = max(references, key=len)
-
-                # Remove .id suffix if present
-                if sg_ref.endswith(".id"):
-                    sg_ref = sg_ref[:-3]
+        for prop_name, target_ref, _relationship_type in terraform_refs:
+            if prop_name == "security_group_id" and "." in target_ref:
+                sg_ref = target_ref
+                break
 
         if not sg_ref:
             logger.warning(
@@ -165,14 +136,12 @@ class AWSVPCSecurityGroupIngressRuleMapper(
         if values.get("cidr_ipv6"):
             rule_metadata["cidr_ipv6"] = values["cidr_ipv6"]
 
-        # Check for CIDR references in config expressions
-        cidr_ipv4_refs = config_expressions.get("cidr_ipv4", {}).get("references", [])
-        if cidr_ipv4_refs:
-            rule_metadata["cidr_ipv4_ref"] = cidr_ipv4_refs[0]
-
-        cidr_ipv6_refs = config_expressions.get("cidr_ipv6", {}).get("references", [])
-        if cidr_ipv6_refs:
-            rule_metadata["cidr_ipv6_ref"] = cidr_ipv6_refs[0]
+        # Check for CIDR references in terraform refs
+        for prop_name, target_ref, _relationship_type in terraform_refs:
+            if prop_name == "cidr_ipv4":
+                rule_metadata["cidr_ipv4_ref"] = target_ref
+            elif prop_name == "cidr_ipv6":
+                rule_metadata["cidr_ipv6_ref"] = target_ref
 
         # Other optional fields
         if values.get("prefix_list_id"):
@@ -198,23 +167,6 @@ class AWSVPCSecurityGroupIngressRuleMapper(
             rule_metadata["tags_all"] = tags_all
 
         return sg_ref, rule_metadata
-
-    def _find_config_resource(
-        self, resource_address: str, parsed_data: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        """Find the configuration resource for the given address."""
-        configuration = parsed_data.get("configuration", {})
-        config_root_module = configuration.get("root_module", {})
-        config_resources = config_root_module.get("resources", [])
-
-        for config_res in config_resources:
-            if config_res.get("address") == resource_address:
-                return config_res
-
-        logger.warning(
-            f"Could not find configuration for resource '{resource_address}'"
-        )
-        return None
 
     def _find_security_group_node(self, sg_ref: str, builder: "ServiceTemplateBuilder"):
         """

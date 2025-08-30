@@ -1,19 +1,17 @@
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.mapper import TerraformMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSRouteTableMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSRouteTableMapper(SingleResourceMapper):
     """Map a Terraform 'aws_route_table' resource to a TOSCA Network node.
 
     A Route Table defines routing rules for network traffic within a VPC.
@@ -30,6 +28,7 @@ class AWSRouteTableMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Translate an aws_route_table resource into a TOSCA Network node.
 
@@ -137,8 +136,52 @@ class AWSRouteTableMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         # Add the standard 'link' capability for Network nodes
         route_table_node.add_capability("link").and_node()
 
-        # Detect dependencies using the Terraform reference system
-        self._add_dependencies(route_table_node, resource_data, node_name, routes)
+        # Add dependencies using injected context
+        if context:
+            terraform_refs = context.extract_terraform_references(resource_data)
+            logger.debug(
+                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+            )
+
+            for prop_name, target_ref, relationship_type in terraform_refs:
+                logger.debug(
+                    "Processing reference: %s -> %s (%s)",
+                    prop_name,
+                    target_ref,
+                    relationship_type,
+                )
+
+                if "." in target_ref:
+                    # target_ref is like "aws_vpc.main"
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                        target_ref, target_resource_type
+                    )
+
+                    # Add requirement with the property name as the requirement name
+                    requirement_name = (
+                        prop_name if prop_name not in ["dependency"] else "dependency"
+                    )
+
+                    (
+                        route_table_node.add_requirement(requirement_name)
+                        .to_node(target_node_name)
+                        .with_relationship(relationship_type)
+                        .and_node()
+                    )
+
+                    logger.info(
+                        "Added %s requirement '%s' to '%s' with relationship %s",
+                        requirement_name,
+                        target_node_name,
+                        node_name,
+                        relationship_type,
+                    )
+        else:
+            logger.warning(
+                "No context provided to detect dependencies for resource '%s'",
+                resource_name,
+            )
 
         logger.debug("Route Table node '%s' created successfully.", node_name)
 
@@ -198,138 +241,3 @@ class AWSRouteTableMapper(TerraformResourceMapperMixin, SingleResourceMapper):
                 processed_routes.append(processed_route)
 
         return processed_routes
-
-    def _add_dependencies(
-        self,
-        route_table_node,
-        resource_data: dict[str, Any],
-        node_name: str,
-        routes: list[dict[str, Any]],
-    ) -> None:
-        """Add dependency relationships based on VPC and route targets."""
-        # Access the full plan via the TerraformMapper instance found on the call stack
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                terraform_mapper = frame_locals["self"]
-                parsed_data = terraform_mapper.get_current_parsed_data()
-                break
-        else:
-            logger.warning(
-                "Unable to access Terraform plan data to detect dependencies for '%s'",
-                node_name,
-            )
-            return
-
-        dependencies_added = set()
-
-        if parsed_data:
-            # Find VPC dependency
-            terraform_refs = TerraformMapper.extract_terraform_references(
-                resource_data, parsed_data
-            )
-
-            for prop_name, target_ref, _relationship_type in terraform_refs:
-                if prop_name == "vpc_id" and target_ref not in dependencies_added:
-                    if "." in target_ref:
-                        # target_ref is like "aws_vpc.example"
-                        target_resource_type = target_ref.split(".", 1)[0]
-                        target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                            target_ref, target_resource_type
-                        )
-                        # Route Table depends on VPC
-                        route_table_node.add_requirement("dependency").to_node(
-                            target_node_name
-                        ).with_relationship("DependsOn").and_node()
-
-                        dependencies_added.add(target_ref)
-                        logger.info(
-                            "Added dependency DependsOn from '%s' to VPC '%s'",
-                            node_name,
-                            target_node_name,
-                        )
-
-            # Find route target dependencies (Internet Gateways, NAT Gateways, etc.)
-            self._add_route_target_dependencies(
-                route_table_node, routes, parsed_data, node_name, dependencies_added
-            )
-
-    def _add_route_target_dependencies(
-        self,
-        route_table_node,
-        routes: list[dict[str, Any]],
-        parsed_data: dict[str, Any],
-        node_name: str,
-        dependencies_added: set[str],
-    ) -> None:
-        """Add dependencies to route targets like Internet Gateways."""
-        # Extract all references from the entire resource data
-
-        # Look for references in the configuration section for route targets
-        configuration = parsed_data.get("configuration", {})
-        root_module = configuration.get("root_module", {})
-        config_resources = root_module.get("resources", [])
-
-        # Find our route table configuration
-        resource_address = None
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "resource_data" in frame_locals:
-                resource_address = frame_locals["resource_data"].get("address")
-                break
-
-        if not resource_address:
-            return
-
-        config_resource = None
-        for config_res in config_resources:
-            if config_res.get("address") == resource_address:
-                config_resource = config_res
-                break
-
-        if not config_resource:
-            return
-
-        # Check for references in route blocks
-        expressions = config_resource.get("expressions", {})
-        route_expression = expressions.get("route", {})
-
-        # Check if route has references (this contains all gateway references)
-        if isinstance(route_expression, dict) and "references" in route_expression:
-            terraform_refs = route_expression["references"]
-            for ref in terraform_refs:
-                if ref and ref not in dependencies_added:
-                    # Clean reference (remove .id suffix if present)
-                    clean_ref = ref[:-3] if ref.endswith(".id") else ref
-                    if "." in clean_ref:
-                        target_resource_type = clean_ref.split(".", 1)[0]
-
-                        # Map route target types - include both gateway types
-                        if target_resource_type in [
-                            "aws_internet_gateway",
-                            "aws_egress_only_internet_gateway",
-                            "aws_nat_gateway",
-                            "aws_transit_gateway",
-                            "aws_vpc_endpoint",
-                            "aws_network_interface",
-                        ]:
-                            target_node_name = (
-                                BaseResourceMapper.generate_tosca_node_name(
-                                    clean_ref, target_resource_type
-                                )
-                            )
-
-                            route_table_node.add_requirement("dependency").to_node(
-                                target_node_name
-                            ).with_relationship("DependsOn").and_node()
-
-                            dependencies_added.add(clean_ref)
-                            logger.info(
-                                "Added dependency DependsOn from '%s' to "
-                                "route target '%s'",
-                                node_name,
-                                target_node_name,
-                            )

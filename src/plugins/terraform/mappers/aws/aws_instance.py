@@ -4,15 +4,15 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSInstanceMapper(SingleResourceMapper):
     """Map a Terraform 'aws_instance' resource to a TOSCA Compute node."""
 
     def __init__(self):
@@ -329,6 +329,7 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Translate an aws_instance into a TOSCA Compute node."""
         logger.info(f"Mapping EC2 Instance resource: '{resource_name}'")
@@ -362,7 +363,9 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         cpu_options = values.get("cpu_options", [])
 
         # Infer compute capabilities from the AWS instance type and cpu_options
-        self._add_compute_capabilities(compute_node, instance_type, ami, cpu_options)
+        self._add_compute_capabilities(
+            compute_node, instance_type, ami, cpu_options, context
+        )
 
         # Build comprehensive metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
@@ -435,11 +438,52 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         # Update the node metadata with the additional information
         compute_node.with_metadata(metadata)
 
-        # Add subnet dependency if present
-        self._add_subnet_dependency(compute_node, resource_data, node_name)
+        # Add dependencies using injected context
+        if context:
+            terraform_refs = context.extract_terraform_references(resource_data)
+            logger.debug(
+                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+            )
 
-        # Add security group dependencies if present
-        self._add_security_group_dependencies(compute_node, resource_data, node_name)
+            for prop_name, target_ref, relationship_type in terraform_refs:
+                logger.debug(
+                    "Processing reference: %s -> %s (%s)",
+                    prop_name,
+                    target_ref,
+                    relationship_type,
+                )
+
+                if "." in target_ref:
+                    # target_ref like "aws_subnet.main" or "aws_security_group.web-sg"
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                        target_ref, target_resource_type
+                    )
+
+                    # Add requirement with the property name as the requirement name
+                    requirement_name = (
+                        prop_name if prop_name not in ["dependency"] else "dependency"
+                    )
+
+                    (
+                        compute_node.add_requirement(requirement_name)
+                        .to_node(target_node_name)
+                        .with_relationship(relationship_type)
+                        .and_node()
+                    )
+
+                    logger.info(
+                        "Added %s requirement '%s' to '%s' with relationship %s",
+                        requirement_name,
+                        target_node_name,
+                        node_name,
+                        relationship_type,
+                    )
+        else:
+            logger.warning(
+                "No context provided to detect dependencies for resource '%s'",
+                resource_name,
+            )
 
         logger.debug("EC2 Compute node '%s' created successfully.", node_name)
 
@@ -462,6 +506,7 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         instance_type: str,
         ami: str | None = None,
         cpu_options: list[dict[str, Any]] | None = None,
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Add capabilities to the Compute node based on the instance type.
 
@@ -470,6 +515,7 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
             instance_type: AWS instance type (e.g., 'c6a.2xlarge')
             ami: AMI ID for OS capability inference
             cpu_options: List of CPU option dictionaries from Terraform
+            context: TerraformMappingContext for AMI data extraction
 
         Only capabilities with meaningful properties are added. Empty
         capabilities are omitted.
@@ -514,7 +560,9 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
             )
 
         # Capability "os" with information inferred from the AMI (if any)
-        os_props = self._infer_os_from_ami(ami)
+        # Pass context for AMI data extraction, fallback to pattern matching if
+        # context unavailable
+        os_props = self._infer_os_from_ami(ami, context)
         if os_props:
             os_capability = compute_node.add_capability("os")
             for prop_name, prop_value in os_props.items():
@@ -560,7 +608,9 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         logger.debug("No valid cpu_options found, using default vCPU: %s", default_vcpu)
         return default_vcpu
 
-    def _infer_os_from_ami(self, ami: str | None) -> dict[str, str]:
+    def _infer_os_from_ami(
+        self, ami: str | None, context: "TerraformMappingContext | None" = None
+    ) -> dict[str, str]:
         """Infer operating system properties from the AMI.
 
         First tries to extract detailed info from the Terraform plan data,
@@ -572,37 +622,27 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         if not ami:
             return {}
 
-        # Try to get detailed AMI data from Terraform plan
-        os_props = self._extract_ami_data_from_plan(ami)
+        # Try to get detailed AMI data from Terraform plan if context is available
+        os_props = self._extract_ami_data_from_plan(ami, context)
         if os_props:
             return os_props
 
         # Fallback to basic pattern matching
         return self._infer_os_from_ami_pattern(ami)
 
-    def _extract_ami_data_from_plan(self, ami: str) -> dict[str, str]:
+    def _extract_ami_data_from_plan(
+        self, ami: str, context: "TerraformMappingContext | None" = None
+    ) -> dict[str, str]:
         """Extract OS information from AMI data in the Terraform plan.
 
         Returns:
             A dict with OS properties extracted from plan data.
         """
-        # Import here to avoid circular imports
-        import inspect
-
-        from src.plugins.terraform.mapper import TerraformMapper
-
-        # Access the full plan via the TerraformMapper instance found on the call stack
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                parsed_data = frame_locals["self"].get_current_parsed_data()
-                break
-        else:
-            logger.debug("Could not access parsed_data for AMI information extraction")
+        if not context:
+            logger.debug("No context provided for AMI information extraction")
             return {}
+
+        parsed_data = context.parsed_data
 
         # Look for AMI data in prior_state (where data sources are stored)
         prior_state = parsed_data.get("prior_state", {})
@@ -766,147 +806,6 @@ class AWSInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
             )
 
         return os_props
-
-    def _add_subnet_dependency(
-        self,
-        compute_node,
-        resource_data: dict[str, Any],
-        node_name: str,
-    ) -> None:
-        """Add dependency relationship to the subnet if detected."""
-        # Import here to avoid circular imports
-        import inspect
-
-        from src.plugins.terraform.mapper import TerraformMapper
-
-        # Access the full plan via the TerraformMapper instance found on the call stack
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                parsed_data = frame_locals["self"].get_current_parsed_data()
-                break
-        else:
-            logger.debug("Could not access parsed_data for dependency detection")
-            return
-
-        # Extract Terraform references using the static method
-        references = TerraformMapper.extract_terraform_references(
-            resource_data, parsed_data
-        )
-
-        # Look for subnet dependency
-        subnet_dependency_added = False
-        for prop_name, target_resource, relationship_type in references:
-            if prop_name == "subnet_id" and "aws_subnet" in target_resource:
-                # Convert aws_subnet.example -> aws_subnet_example for TOSCA node name
-                target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                    target_resource, "aws_subnet"
-                )
-
-                logger.debug(
-                    "Adding subnet dependency: %s -> %s (%s)",
-                    node_name,
-                    target_node_name,
-                    relationship_type,
-                )
-
-                # Add the requirement to connect to the subnet
-                compute_node.add_requirement("dependency").to_node(
-                    target_node_name
-                ).with_relationship("DependsOn").and_node()
-
-                subnet_dependency_added = True
-                break
-
-        if not subnet_dependency_added:
-            logger.debug("No subnet dependency detected for instance '%s'", node_name)
-
-    def _add_security_group_dependencies(
-        self,
-        compute_node,
-        resource_data: dict[str, Any],
-        node_name: str,
-    ) -> None:
-        """Add dependency relationships to security groups if detected."""
-        # Import here to avoid circular imports
-        import inspect
-
-        from src.plugins.terraform.mapper import TerraformMapper
-
-        # Access the full plan via the TerraformMapper instance found on the call stack
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                parsed_data = frame_locals["self"].get_current_parsed_data()
-                break
-        else:
-            logger.debug(
-                "Could not access parsed_data for security group dependency detection"
-            )
-            return
-
-        # Extract Terraform references using the static method
-        references = TerraformMapper.extract_terraform_references(
-            resource_data, parsed_data
-        )
-
-        # Look for security group dependencies
-        security_group_dependencies_added = 0
-        added_security_groups = set()  # Keep track of already added security groups
-        for prop_name, target_resource, relationship_type in references:
-            # Check for security group properties
-            sg_props = [
-                "vpc_security_group_ids",
-                "security_groups",
-                "security_group_ids",
-            ]
-            if prop_name in sg_props and "aws_security_group" in target_resource:
-                # Convert aws_security_group.web-sg -> aws_security_group_web_sg
-                # for TOSCA node name
-                target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                    target_resource, "aws_security_group"
-                )
-
-                # Avoid adding the same security group dependency multiple times
-                if target_node_name in added_security_groups:
-                    logger.debug(
-                        "Security group dependency already added: %s -> %s, skipping",
-                        node_name,
-                        target_node_name,
-                    )
-                    continue
-
-                logger.debug(
-                    "Adding security group dependency: %s -> %s (%s)",
-                    node_name,
-                    target_node_name,
-                    relationship_type,
-                )
-
-                # Add the requirement to connect to the security group
-                compute_node.add_requirement("dependency").to_node(
-                    target_node_name
-                ).with_relationship("DependsOn").and_node()
-
-                added_security_groups.add(target_node_name)
-                security_group_dependencies_added += 1
-
-        if security_group_dependencies_added == 0:
-            logger.debug(
-                "No security group dependencies detected for instance '%s'", node_name
-            )
-        else:
-            logger.info(
-                "Added %d security group dependencies for instance '%s'",
-                security_group_dependencies_added,
-                node_name,
-            )
 
     def _generate_mount_point(self, device_name: str) -> str:
         """Generate a logical mount point from a device name.

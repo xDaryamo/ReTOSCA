@@ -3,15 +3,15 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSDBInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSDBInstanceMapper(SingleResourceMapper):
     """Map a Terraform 'aws_db_instance' resource to TOSCA DBMS and Database nodes.
 
     This mapper creates two interconnected nodes:
@@ -22,6 +22,7 @@ class AWSDBInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
     def __init__(self):
         """Initialize the mapper with database engine type mapping."""
         super().__init__()
+        self._logger = logging.getLogger(self.__class__.__name__)
         # Mapping from AWS engine names to more standardized types
         self._engine_type_mapping = {
             "mysql": "MySQL",
@@ -57,6 +58,7 @@ class AWSDBInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Translate an aws_db_instance resource into TOSCA DBMS and Database nodes.
 
@@ -102,12 +104,65 @@ class AWSDBInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
             resource_type,
             resource_data,
             values,
+            context,
         )
 
         # Create the relationship between Database and DBMS
         database_node.add_requirement("host").to_node(dbms_node_name).with_relationship(
             "HostedOn"
         ).and_node()
+
+        # Add dependencies using injected context
+        if context:
+            terraform_refs = context.extract_terraform_references(resource_data)
+            logger.debug(
+                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+            )
+
+            for prop_name, target_ref, relationship_type in terraform_refs:
+                logger.debug(
+                    "Processing reference: %s -> %s (%s)",
+                    prop_name,
+                    target_ref,
+                    relationship_type,
+                )
+
+                if "." in target_ref:
+                    # target_ref is like "aws_subnet.main"
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                        target_ref, target_resource_type
+                    )
+
+                    # Add requirement with the property name as the requirement name
+                    requirement_name = (
+                        prop_name if prop_name not in ["dependency"] else "dependency"
+                    )
+
+                    # For DB instances, both DBMS and Database nodes might need
+                    # dependencies
+                    # Apply to DBMS node for infrastructure-level dependencies
+                    dbms_node = builder.get_node(dbms_node_name)
+                    if dbms_node:
+                        (
+                            dbms_node.add_requirement(requirement_name)
+                            .to_node(target_node_name)
+                            .with_relationship(relationship_type)
+                            .and_node()
+                        )
+
+                        logger.info(
+                            "Added %s requirement '%s' to DBMS '%s' with rel %s",
+                            requirement_name,
+                            target_node_name,
+                            dbms_node_name,
+                            relationship_type,
+                        )
+        else:
+            logger.warning(
+                "No context provided to detect dependencies for resource '%s'",
+                resource_name,
+            )
 
         logger.debug(
             "DB Instance nodes '%s' and '%s' created successfully.",
@@ -290,6 +345,7 @@ class AWSDBInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         values: dict[str, Any],
+        context: "TerraformMappingContext | None" = None,
     ):
         """Create and configure the Database node."""
         database_node = builder.add_node(name=node_name, node_type="Database")
@@ -311,22 +367,22 @@ class AWSDBInstanceMapper(TerraformResourceMapperMixin, SingleResourceMapper):
 
         # IMPORTANT: For metadata, always use concrete values (never $get_input)
         # Store the actual resolved database name in metadata for reference
-        db_name_concrete = self.get_concrete_value(
-            resource_address=resource_address,
-            property_name="db_name",
-            fallback_value=values.get("db_name"),
-        )
+        db_name_concrete = values.get("db_name")
+        if context and context.variable_context:
+            db_name_concrete = context.variable_context.get_concrete_value(
+                resource_address, "db_name"
+            ) or values.get("db_name")
+
         if db_name_concrete is not None:
             metadata["aws_database_name"] = db_name_concrete
 
         # Database name - Required property for Database node
         # Use variable-aware resolution for db_name
-        db_name_resolved = self.resolve_property_value(
-            resource_address=resource_address,
-            property_name="db_name",
-            fallback_value=values.get("db_name"),
-            context="property",
-        )
+        db_name_resolved = values.get("db_name")
+        if context and context.variable_context:
+            db_name_resolved = context.variable_context.resolve_property(
+                resource_address, "db_name", "property"
+            ) or values.get("db_name")
 
         if db_name_resolved is not None:
             database_node.with_property("name", db_name_resolved)

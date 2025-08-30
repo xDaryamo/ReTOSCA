@@ -3,15 +3,15 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSVolumeAttachmentMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSVolumeAttachmentMapper(SingleResourceMapper):
     """Map a Terraform 'aws_volume_attachment' resource to TOSCA relationships.
 
     This mapper doesn't create a separate node but instead modifies existing nodes
@@ -29,6 +29,7 @@ class AWSVolumeAttachmentMapper(TerraformResourceMapperMixin, SingleResourceMapp
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Create attachment relationship between instance and EBS volume.
 
@@ -61,7 +62,16 @@ class AWSVolumeAttachmentMapper(TerraformResourceMapperMixin, SingleResourceMapp
             return
 
         # Find instance and volume references from configuration
-        instance_address, volume_address = self._extract_references(resource_data)
+        if not context:
+            logger.warning(
+                "No context provided to resolve references for '%s'. Skipping.",
+                resource_name,
+            )
+            return
+
+        instance_address, volume_address = self._extract_references(
+            resource_data, context
+        )
 
         if not instance_address or not volume_address:
             logger.warning(
@@ -116,85 +126,41 @@ class AWSVolumeAttachmentMapper(TerraformResourceMapperMixin, SingleResourceMapp
         )
 
     def _extract_references(
-        self, resource_data: dict[str, Any]
+        self, resource_data: dict[str, Any], context: "TerraformMappingContext"
     ) -> tuple[str | None, str | None]:
         """Extract instance and volume references from the resource configuration.
 
         Args:
             resource_data: The resource data from Terraform plan
+            context: TerraformMappingContext containing parsed data
 
         Returns:
             Tuple of (instance_address, volume_address) or (None, None) if not found
         """
-        # Import here to avoid circular imports
-        import inspect
+        # Extract all Terraform references using context
+        terraform_refs = context.extract_terraform_references(resource_data)
 
-        from src.plugins.terraform.mapper import TerraformMapper
-
-        # Access the full plan via the TerraformMapper instance found on the call stack
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                parsed_data = frame_locals["self"].get_current_parsed_data()
-                break
-        else:
-            logger.debug("Could not access parsed_data for reference extraction")
-            return None, None
-
-        # Get the attachment address
-        attachment_address = resource_data.get("address")
-        if not attachment_address:
-            logger.debug("No address found for volume attachment resource")
-            return None, None
-
-        # Find configuration for this resource
-        configuration = parsed_data.get("configuration", {})
-        config_root_module = configuration.get("root_module", {})
-        config_resources = config_root_module.get("resources", [])
-
-        attachment_config = None
-        for config_res in config_resources:
-            if config_res.get("address") == attachment_address:
-                attachment_config = config_res
-                break
-
-        if not attachment_config:
-            logger.debug(
-                "No configuration found for volume attachment '%s'", attachment_address
-            )
-            return None, None
-
-        # Extract references from expressions
-        expressions = attachment_config.get("expressions", {})
-        instance_id_expr = expressions.get("instance_id", {})
-        volume_id_expr = expressions.get("volume_id", {})
-
-        # Get instance reference
-        instance_references = instance_id_expr.get("references", [])
         instance_address = None
-        for ref in instance_references:
-            if "aws_instance" in ref:
-                # Remove .id suffix if present
-                if ref.endswith(".id"):
-                    instance_address = ref[:-3]
-                else:
-                    instance_address = ref
-                break
-
-        # Get volume reference
-        volume_references = volume_id_expr.get("references", [])
         volume_address = None
-        for ref in volume_references:
-            if "aws_ebs_volume" in ref:
-                # Remove .id suffix if present
-                if ref.endswith(".id"):
-                    volume_address = ref[:-3]
-                else:
-                    volume_address = ref
-                break
+
+        # Process each reference to find instance and volume
+        for prop_name, target_ref, _relationship_type in terraform_refs:
+            if "." in target_ref:
+                target_resource_type = target_ref.split(".", 1)[0]
+
+                # Check for instance reference
+                if (
+                    prop_name == "instance_id"
+                    and target_resource_type == "aws_instance"
+                ):
+                    instance_address = target_ref
+
+                # Check for volume reference
+                elif (
+                    prop_name == "volume_id"
+                    and target_resource_type == "aws_ebs_volume"
+                ):
+                    volume_address = target_ref
 
         logger.debug(
             "Extracted references - Instance: %s, Volume: %s",

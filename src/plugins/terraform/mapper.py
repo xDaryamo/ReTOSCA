@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 
+from .context import TerraformMappingContext
 from .variables import VariableContext
 
 if TYPE_CHECKING:
@@ -111,19 +112,36 @@ class TerraformMapper(BaseResourceMapper):
         mapper_strategy = self._mappers.get(resource_type)
 
         if mapper_strategy:
-            # Set variable context on the mapper if it supports it
-            if hasattr(mapper_strategy, "set_variable_context"):
-                mapper_strategy.set_variable_context(self._variable_context)
-
             # Uses can_map for a finer check
             if mapper_strategy.can_map(resource_type, resource_data):
                 self._logger.debug(
                     f"Mapping resource '{resource_name}' ({resource_type})"
                 )
-                # Delegates work to the specific strategy class
-                mapper_strategy.map_resource(
-                    resource_name, resource_type, resource_data, builder
+
+                # Create context object for dependency injection
+                context = TerraformMappingContext(
+                    parsed_data=self._current_parsed_data or {},
+                    variable_context=self._variable_context,
                 )
+
+                # Check if mapper supports context parameter
+                import inspect
+
+                sig = inspect.signature(mapper_strategy.map_resource)
+                if "context" in sig.parameters:
+                    # Delegates work to the specific strategy class with context
+                    mapper_strategy.map_resource(
+                        resource_name, resource_type, resource_data, builder, context
+                    )
+                else:
+                    # Fallback for mappers that don't support context yet
+                    self._logger.debug(
+                        f"Mapper {mapper_strategy.__class__.__name__} does not support "
+                        "context parameter yet"
+                    )
+                    mapper_strategy.map_resource(
+                        resource_name, resource_type, resource_data, builder
+                    )
             else:
                 self._logger.warning(
                     f"The mapper for '{resource_type}' cannot handle "
@@ -153,8 +171,8 @@ class TerraformMapper(BaseResourceMapper):
         requirements.
 
         Args:
-            resource_data: Single resource data (from planned_values).
-            parsed_data: Full plan dict (needed to access `configuration`).
+            resource_data: Single resource data (from state or planned_values).
+            parsed_data: Full JSON dict (can be plan or state).
 
         Returns:
             List of tuples (property_name, target_resource_address, relationship_type),
@@ -162,17 +180,61 @@ class TerraformMapper(BaseResourceMapper):
         """
         references: list[tuple[str, str, str]] = []
 
-        # Without parsed_data we can't inspect `configuration`
         if not parsed_data:
             return references
 
-        # Address of the current resource
         resource_address = resource_data.get("address")
         if not resource_address:
             return references
 
-        # Find the matching configuration entry
+        # Try two approaches: configuration (for plans) or depends_on (for state)
+
+        # Approach 1: Extract from configuration (terraform plan JSON)
         configuration = parsed_data.get("configuration", {})
+        if configuration:
+            references.extend(
+                TerraformMapper._extract_from_configuration(
+                    resource_address, configuration
+                )
+            )
+
+        # Approach 2: Extract from depends_on (terraform state JSON)
+        depends_on = resource_data.get("depends_on", [])
+        if depends_on:
+            for dependency in depends_on:
+                # dependency is like "aws_vpc.main"
+                rel_type = TerraformMapper._determine_terraform_relationship_type(
+                    "dependency", dependency
+                )
+                references.append(("dependency", dependency, rel_type))
+
+        # Approach 3: Infer relationships from property values (only if no explicit
+        # depends_on)
+        if not depends_on:
+            references.extend(
+                TerraformMapper._extract_from_property_patterns(
+                    resource_data, parsed_data
+                )
+            )
+
+        # Deduplicate references by target resource to avoid redundant requirements
+        unique_references = []
+        seen_targets = set()
+
+        for prop_name, target_ref, relationship_type in references:
+            if target_ref not in seen_targets:
+                unique_references.append((prop_name, target_ref, relationship_type))
+                seen_targets.add(target_ref)
+
+        return unique_references
+
+    @staticmethod
+    def _extract_from_configuration(
+        resource_address: str, configuration: dict[str, Any]
+    ) -> list[tuple[str, str, str]]:
+        """Extract references from configuration expressions (plan JSON)."""
+        references: list[tuple[str, str, str]] = []
+
         root_module = configuration.get("root_module", {})
         config_resources = root_module.get("resources", [])
 
@@ -207,6 +269,54 @@ class TerraformMapper(BaseResourceMapper):
         return references
 
     @staticmethod
+    def _extract_from_property_patterns(
+        resource_data: dict[str, Any], parsed_data: dict[str, Any]
+    ) -> list[tuple[str, str, str]]:
+        """Extract relationships from property value patterns."""
+        references: list[tuple[str, str, str]] = []
+
+        # Get resource values
+        values = resource_data.get("values", {})
+        if not values:
+            return references
+
+        # Look for common reference patterns in property values
+        # For example: vpc_id pointing to an actual VPC
+        vpc_id = values.get("vpc_id")
+        if vpc_id and isinstance(vpc_id, str):
+            # Find the VPC resource that has this ID
+            vpc_resource = TerraformMapper._find_resource_by_id(
+                parsed_data, vpc_id, "aws_vpc"
+            )
+            if vpc_resource:
+                rel_type = TerraformMapper._determine_terraform_relationship_type(
+                    "vpc_id", vpc_resource
+                )
+                references.append(("ref_vpc_id", vpc_resource, rel_type))
+
+        return references
+
+    @staticmethod
+    def _find_resource_by_id(
+        parsed_data: dict[str, Any], resource_id: str, resource_type: str
+    ) -> str | None:
+        """Find a resource address by its ID and type."""
+        # Look in values section (state JSON)
+        values = parsed_data.get("values", {})
+        if values:
+            root_module = values.get("root_module", {})
+            resources = root_module.get("resources", [])
+
+            for resource in resources:
+                if (
+                    resource.get("type") == resource_type
+                    and resource.get("values", {}).get("id") == resource_id
+                ):
+                    return resource.get("address")
+
+        return None
+
+    @staticmethod
     def _determine_terraform_relationship_type(
         property_name: str, target_resource: str
     ) -> str:
@@ -235,24 +345,34 @@ class TerraformMapper(BaseResourceMapper):
         self, parsed_data: dict[str, Any]
     ) -> Iterable[tuple[str, str, dict[str, Any]]]:
         """
-        Extract all resources from a Terraform plan JSON.
+        Extract all resources from a Terraform JSON (plan or state).
 
         Yields:
             (resource_full_address, resource_type, resource_data)
         """
-        self._logger.info("Inizio estrazione delle risorse dal piano Terraform.")
+        self._logger.info("Starting extraction of resources from Terraform JSON.")
 
+        # Try to find resources in either planned_values (for plan) or values (for
+        # state)
+        root_module = None
+
+        # Check for planned state (from plan)
         planned_values = parsed_data.get("planned_values")
-        if not planned_values:
-            self._logger.warning(
-                "Nessuna chiave 'planned_values' trovata nel JSON. "
-                "Nessuna risorsa da mappare."
-            )
-            return
+        if planned_values:
+            root_module = planned_values.get("root_module")
+            self._logger.debug("Found 'planned_values' structure (plan JSON)")
 
-        root_module = planned_values.get("root_module")
+        # Check for applied state (from show on applied state)
         if not root_module:
-            self._logger.warning("Nessun 'root_module' trovato in 'planned_values'.")
+            values = parsed_data.get("values")
+            if values:
+                root_module = values.get("root_module")
+                self._logger.debug("Found 'values' structure (state JSON)")
+
+        if not root_module:
+            self._logger.warning(
+                "No 'planned_values' or 'values' found in JSON. No resources to map."
+            )
             return
 
         # Recurse through modules
@@ -272,7 +392,7 @@ class TerraformMapper(BaseResourceMapper):
                 continue
 
             self._logger.debug(
-                f"Trovata risorsa: {full_address} (Tipo: {resource_type})"
+                f"Found resource: {full_address} (Type: {resource_type})"
             )
             # Return full address as name, type, and raw data
             yield full_address, resource_type, resource

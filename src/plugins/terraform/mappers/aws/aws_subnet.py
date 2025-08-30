@@ -1,19 +1,17 @@
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.mapper import TerraformMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSSubnetMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSSubnetMapper(SingleResourceMapper):
     """Map a Terraform 'aws_subnet' resource to a TOSCA Network node.
 
     This mapper is specific to the 'aws_subnet' resource type.
@@ -29,6 +27,7 @@ class AWSSubnetMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Translate an aws_subnet resource into a TOSCA Network node.
 
@@ -37,6 +36,8 @@ class AWSSubnetMapper(TerraformResourceMapperMixin, SingleResourceMapper):
             resource_type: resource type (always 'aws_subnet')
             resource_data: resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext containing dependencies for reference
+                extraction
         """
         logger.info("Mapping Subnet resource: '%s'", resource_name)
 
@@ -137,51 +138,52 @@ class AWSSubnetMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         # Add the standard 'link' capability for Network nodes
         subnet_node.add_capability("link").and_node()
 
-        # Simple detection of the VPC dependency
-        # Access the full plan via the TerraformMapper instance found on the call stack
+        # Add all discovered dependencies using injected context
+        if context:
+            terraform_refs = context.extract_terraform_references(resource_data)
+            logger.debug(
+                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+            )
 
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                terraform_mapper = frame_locals["self"]
-                parsed_data = terraform_mapper.get_current_parsed_data()
-                break
+            for prop_name, target_ref, relationship_type in terraform_refs:
+                logger.debug(
+                    "Processing reference: %s -> %s (%s)",
+                    prop_name,
+                    target_ref,
+                    relationship_type,
+                )
+
+                if "." in target_ref:
+                    # target_ref is like "aws_vpc.main"
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                        target_ref, target_resource_type
+                    )
+
+                    # Add requirement with the property name as the requirement name
+                    requirement_name = (
+                        prop_name if prop_name not in ["dependency"] else "dependency"
+                    )
+
+                    (
+                        subnet_node.add_requirement(requirement_name)
+                        .to_node(target_node_name)
+                        .with_relationship(relationship_type)
+                        .and_node()
+                    )
+
+                    logger.info(
+                        "Added %s requirement '%s' to '%s' with relationship %s",
+                        requirement_name,
+                        target_node_name,
+                        node_name,
+                        relationship_type,
+                    )
         else:
             logger.warning(
-                "Unable to access Terraform plan data to detect requirements"
+                "No context provided to detect dependencies for resource '%s'",
+                resource_name,
             )
-
-        # Find only the VPC dependency
-        vpc_dependency_added = False
-        if parsed_data:
-            terraform_refs = TerraformMapper.extract_terraform_references(
-                resource_data, parsed_data
-            )
-            for prop_name, target_ref, relationship_type in terraform_refs:
-                if prop_name == "vpc_id" and not vpc_dependency_added:
-                    if "." in target_ref:
-                        # target_ref è del tipo "aws_vpc.main"
-                        # target_ref is like "aws_vpc.main"
-                        target_resource_type = target_ref.split(".", 1)[0]
-                        target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                            target_ref, target_resource_type
-                        )
-                        (
-                            subnet_node.add_requirement("dependency")
-                            .to_node(target_node_name)
-                            .with_relationship(relationship_type)
-                            .and_node()
-                        )
-                        vpc_dependency_added = True
-                        logger.info(
-                            "Added dependency %s to '%s' for VPC",
-                            relationship_type,
-                            target_node_name,
-                        )
-                        break  # Solo una dipendenza VPC
 
         logger.debug("Network Subnet node '%s' created successfully.", node_name)
 

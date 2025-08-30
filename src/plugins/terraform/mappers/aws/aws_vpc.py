@@ -3,15 +3,15 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSVPCMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSVPCMapper(SingleResourceMapper):
     """Map a Terraform 'aws_vpc' resource into a tosca.nodes.Network node."""
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
@@ -24,8 +24,18 @@ class AWSVPCMapper(TerraformResourceMapperMixin, SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
-        """Perform translation from aws_vpc to tosca.nodes.Network."""
+        """Perform translation from aws_vpc to tosca.nodes.Network.
+
+        Args:
+            resource_name: The name/identifier of the resource
+            resource_type: The type/kind of resource (e.g., 'aws_vpc')
+            resource_data: The resource configuration data
+            builder: The ServiceTemplateBuilder to populate with TOSCA resources
+            context: TerraformMappingContext containing dependencies for reference
+                extraction
+        """
         logger.info(f"Mapping AWS VPC resource: '{resource_name}'")
 
         # Actual values are under the 'values' key in the plan JSON
@@ -183,6 +193,53 @@ class AWSVPCMapper(TerraformResourceMapperMixin, SingleResourceMapper):
 
         # Attach all metadata to the node
         network_node.with_metadata(metadata)
+
+        # Add dependencies using injected context (VPCs rarely have dependencies)
+        if context:
+            terraform_refs = context.extract_terraform_references(resource_data)
+            logger.debug(
+                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+            )
+
+            for prop_name, target_ref, relationship_type in terraform_refs:
+                logger.debug(
+                    "Processing reference: %s -> %s (%s)",
+                    prop_name,
+                    target_ref,
+                    relationship_type,
+                )
+
+                if "." in target_ref:
+                    # target_ref is like "aws_internet_gateway.main"
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                        target_ref, target_resource_type
+                    )
+
+                    # Add requirement with the property name as the requirement name
+                    requirement_name = (
+                        prop_name if prop_name not in ["dependency"] else "dependency"
+                    )
+
+                    (
+                        network_node.add_requirement(requirement_name)
+                        .to_node(target_node_name)
+                        .with_relationship(relationship_type)
+                        .and_node()
+                    )
+
+                    logger.info(
+                        "Added %s requirement '%s' to '%s' with relationship %s",
+                        requirement_name,
+                        target_node_name,
+                        node_name,
+                        relationship_type,
+                    )
+        else:
+            logger.warning(
+                "No context provided to detect dependencies for resource '%s'",
+                resource_name,
+            )
 
         logger.debug(f"VPC Network node '{node_name}' created successfully.")
 

@@ -1,20 +1,17 @@
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSRouteTableAssociationMapper(
-    TerraformResourceMapperMixin, SingleResourceMapper
-):
+class AWSRouteTableAssociationMapper(SingleResourceMapper):
     """Map a Terraform 'aws_route_table_association' resource to TOSCA relationships.
 
     This mapper doesn't create a separate node but instead modifies existing nodes
@@ -32,6 +29,7 @@ class AWSRouteTableAssociationMapper(
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Create association relationship between subnet/gateway and route table.
 
@@ -55,11 +53,18 @@ class AWSRouteTableAssociationMapper(
             return
 
         # Extract references from configuration
+        if not context:
+            logger.warning(
+                "No context provided to resolve references for '%s'. Skipping.",
+                resource_name,
+            )
+            return
+
         (
             subnet_address,
             gateway_address,
             route_table_address,
-        ) = self._extract_references(resource_data)
+        ) = self._extract_references(resource_data, context)
 
         if not route_table_address:
             logger.warning(
@@ -93,108 +98,48 @@ class AWSRouteTableAssociationMapper(
             )
 
     def _extract_references(
-        self, resource_data: dict[str, Any]
+        self, resource_data: dict[str, Any], context: "TerraformMappingContext"
     ) -> tuple[str | None, str | None, str | None]:
         """Extract subnet, gateway, and route table references from configuration.
 
         Args:
             resource_data: The resource data from Terraform plan
+            context: TerraformMappingContext containing parsed data
 
         Returns:
             Tuple of (subnet_address, gateway_address, route_table_address)
         """
-        # Import here to avoid circular imports
-        from src.plugins.terraform.mapper import TerraformMapper
+        # Extract all Terraform references using context
+        terraform_refs = context.extract_terraform_references(resource_data)
 
-        # Access the full plan via the TerraformMapper instance found on the call stack
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                parsed_data = frame_locals["self"].get_current_parsed_data()
-                break
-        else:
-            logger.debug("Could not access parsed_data for reference extraction")
-            return None, None, None
-
-        # Get the association address
-        association_address = resource_data.get("address")
-        if not association_address:
-            logger.debug("No address found for route table association resource")
-            return None, None, None
-
-        # Find configuration for this resource
-        configuration = parsed_data.get("configuration", {})
-        config_root_module = configuration.get("root_module", {})
-        config_resources = config_root_module.get("resources", [])
-
-        association_config = None
-        for config_res in config_resources:
-            if config_res.get("address") == association_address:
-                association_config = config_res
-                break
-
-        if not association_config:
-            logger.debug(
-                "No configuration found for route table association '%s'",
-                association_address,
-            )
-            return None, None, None
-
-        # Extract references from expressions
-        expressions = association_config.get("expressions", {})
-
-        # Get subnet reference
         subnet_address = None
-        subnet_id_expr = expressions.get("subnet_id", {})
-        if subnet_id_expr:
-            subnet_references = subnet_id_expr.get("references", [])
-            for ref in subnet_references:
-                if "aws_subnet" in ref:
-                    # Remove .id suffix if present
-                    if ref.endswith(".id"):
-                        subnet_address = ref[:-3]
-                    else:
-                        subnet_address = ref
-                    break
-
-        # Get gateway reference
         gateway_address = None
-        gateway_id_expr = expressions.get("gateway_id", {})
-        if gateway_id_expr:
-            gateway_references = gateway_id_expr.get("references", [])
-            for ref in gateway_references:
-                if any(
-                    gw_type in ref
-                    for gw_type in [
-                        "aws_internet_gateway",
-                        "aws_egress_only_internet_gateway",
-                        "aws_vpn_gateway",
-                        "aws_nat_gateway",
-                    ]
-                ):
-                    # Remove .id suffix if present
-                    if ref.endswith(".id"):
-                        gateway_address = ref[:-3]
-                    else:
-                        gateway_address = ref
-                    break
-
-        # Get route table reference
         route_table_address = None
-        route_table_id_expr = expressions.get("route_table_id", {})
-        if route_table_id_expr:
-            route_table_references = route_table_id_expr.get("references", [])
-            for ref in route_table_references:
-                if "aws_route_table" in ref:
-                    # Remove .id suffix if present
-                    if ref.endswith(".id"):
-                        route_table_address = ref[:-3]
-                    else:
-                        route_table_address = ref
-                    break
+
+        # Process each reference to find subnet, gateway, and route table
+        for prop_name, target_ref, _relationship_type in terraform_refs:
+            if "." in target_ref:
+                target_resource_type = target_ref.split(".", 1)[0]
+
+                # Check for subnet reference
+                if prop_name == "subnet_id" and target_resource_type == "aws_subnet":
+                    subnet_address = target_ref
+
+                # Check for gateway reference
+                elif prop_name == "gateway_id" and target_resource_type in [
+                    "aws_internet_gateway",
+                    "aws_egress_only_internet_gateway",
+                    "aws_vpn_gateway",
+                    "aws_nat_gateway",
+                ]:
+                    gateway_address = target_ref
+
+                # Check for route table reference
+                elif (
+                    prop_name == "route_table_id"
+                    and target_resource_type == "aws_route_table"
+                ):
+                    route_table_address = target_ref
 
         logger.debug(
             "Extracted references - Subnet: %s, Gateway: %s, Route Table: %s",

@@ -1,19 +1,17 @@
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
-from src.plugins.terraform.mapper import TerraformMapper
-from src.plugins.terraform.terraform_mapper_base import TerraformResourceMapperMixin
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
 
 
-class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper):
+class AWSDBSubnetGroupMapper(SingleResourceMapper):
     """Map a Terraform 'aws_db_subnet_group' resource to a TOSCA Placement policy.
 
     This mapper creates a Placement policy that governs the placement of
@@ -32,6 +30,7 @@ class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper)
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Map aws_db_subnet_group resource to a TOSCA Placement policy.
 
@@ -94,15 +93,16 @@ class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper)
             metadata["aws_subnet_ids"] = subnet_ids
             metadata["aws_subnet_count"] = len(subnet_ids)
 
-        # Extract subnet information to get availability zones
-        subnet_info = self._extract_subnet_information(resource_data)
-        if subnet_info:
-            metadata["aws_subnet_details"] = subnet_info
-            metadata["aws_availability_zones"] = [
-                subnet["availability_zone"]
-                for subnet in subnet_info
-                if subnet.get("availability_zone")
-            ]
+        # Extract subnet information to get availability zones (if context available)
+        if context:
+            subnet_info = self._extract_subnet_information(resource_data, context)
+            if subnet_info:
+                metadata["aws_subnet_details"] = subnet_info
+                metadata["aws_availability_zones"] = [
+                    subnet["availability_zone"]
+                    for subnet in subnet_info
+                    if subnet.get("availability_zone")
+                ]
 
         # Name prefix if used instead of explicit name
         name_prefix = values.get("name_prefix")
@@ -156,16 +156,20 @@ class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper)
         # Add metadata to the policy
         policy_builder.with_metadata(metadata)
 
-        # Find and add targets - database nodes that use this subnet group
-        target_nodes = self._find_database_targets(subnet_group_name, clean_name)
-        if target_nodes:
-            policy_builder.with_targets(*target_nodes)
-            logger.info(
-                "Policy '%s' will target %d database nodes: %s",
-                policy_name,
-                len(target_nodes),
-                target_nodes,
+        # Find and add targets - database nodes that use this subnet group (if
+        # context available)
+        if context:
+            target_nodes = self._find_database_targets(
+                subnet_group_name, clean_name, context
             )
+            if target_nodes:
+                policy_builder.with_targets(*target_nodes)
+                logger.info(
+                    "Policy '%s' will target %d database nodes: %s",
+                    policy_name,
+                    len(target_nodes),
+                    target_nodes,
+                )
 
         # Determine targets - look for database nodes that should be affected
         # by this policy. For now, we'll set an empty targets list and let
@@ -202,65 +206,37 @@ class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper)
         )
 
     def _extract_subnet_information(
-        self, resource_data: dict[str, Any]
+        self, resource_data: dict[str, Any], context: "TerraformMappingContext"
     ) -> list[dict[str, Any]]:
         """Extract detailed information about the subnets referenced by this group.
 
         Args:
             resource_data: Resource data from Terraform plan
+            context: TerraformMappingContext containing parsed data
 
         Returns:
             List of subnet information dictionaries with details like AZ
         """
         subnet_info: list[dict[str, Any]] = []
 
-        # Access the full plan via the TerraformMapper instance
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                terraform_mapper = frame_locals["self"]
-                parsed_data = terraform_mapper.get_current_parsed_data()
-                break
-        else:
+        # Extract Terraform references using context to find subnet references
+        terraform_refs = context.extract_terraform_references(resource_data)
+
+        # Get planned values from context to find subnet resources
+        parsed_data = context.parsed_data
+        if not parsed_data:
             logger.debug("Could not access parsed_data for subnet information")
             return subnet_info
 
-        if not parsed_data:
-            return subnet_info
-
-        # Get the resource address to find its configuration
-        resource_address = resource_data.get("address")
-        if not resource_address:
-            return subnet_info
-
-        # Find configuration for this resource to get subnet references
-        configuration = parsed_data.get("configuration", {})
-        config_root_module = configuration.get("root_module", {})
-        config_resources = config_root_module.get("resources", [])
-
-        db_subnet_group_config = None
-        for config_res in config_resources:
-            if config_res.get("address") == resource_address:
-                db_subnet_group_config = config_res
-                break
-
-        if not db_subnet_group_config:
-            logger.debug("Configuration not found for %s", resource_address)
-            return subnet_info
-
-        # Extract subnet references from expressions
-        expressions = db_subnet_group_config.get("expressions", {})
-        subnet_ids_expr = expressions.get("subnet_ids", {})
-        subnet_references = subnet_ids_expr.get("references", [])
-
-        # Get planned values to find subnet resources
         planned_values = parsed_data.get("planned_values", {})
         root_module = planned_values.get("root_module", {})
 
         # Find subnet resources that match our references
+        subnet_references = []
+        for prop_name, target_ref, _relationship_type in terraform_refs:
+            if prop_name == "subnet_ids" and "aws_subnet" in target_ref:
+                subnet_references.append(target_ref)
+
         for resource in root_module.get("resources", []):
             if resource.get("type") == "aws_subnet":
                 subnet_address = resource.get("address", "")
@@ -268,14 +244,7 @@ class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper)
 
                 # Check if this subnet is referenced by our subnet group
                 for subnet_ref in subnet_references:
-                    if (
-                        isinstance(subnet_ref, str)
-                        and subnet_address
-                        and (
-                            subnet_address in subnet_ref
-                            or subnet_ref.startswith(subnet_address)
-                        )
-                    ):
+                    if subnet_address == subnet_ref:
                         subnet_detail = {
                             "subnet_address": subnet_address,
                             "cidr_block": subnet_values.get("cidr_block"),
@@ -295,34 +264,27 @@ class AWSDBSubnetGroupMapper(TerraformResourceMapperMixin, SingleResourceMapper)
         return subnet_info
 
     def _find_database_targets(
-        self, subnet_group_name: str | None, clean_name: str
+        self,
+        subnet_group_name: str | None,
+        clean_name: str,
+        context: "TerraformMappingContext",
     ) -> list[str]:
         """Find database nodes that should be targeted by this placement policy.
 
         Args:
             subnet_group_name: Name of the DB subnet group
             clean_name: Clean resource name as fallback
+            context: TerraformMappingContext containing parsed data
 
         Returns:
             List of database node names that should be targeted
         """
         targets: list[str] = []
 
-        # Access the current parsed data to find database instances
-        parsed_data: dict[str, Any] = {}
-        for frame_info in inspect.stack():
-            frame_locals = frame_info.frame.f_locals
-            if "self" in frame_locals and isinstance(
-                frame_locals["self"], TerraformMapper
-            ):
-                terraform_mapper = frame_locals["self"]
-                parsed_data = terraform_mapper.get_current_parsed_data()
-                break
-        else:
-            logger.debug("Could not access parsed_data for target identification")
-            return targets
-
+        # Get parsed data from context to find database instances
+        parsed_data = context.parsed_data
         if not parsed_data:
+            logger.debug("Could not access parsed_data for target identification")
             return targets
 
         # Look for database instances that reference this subnet group
