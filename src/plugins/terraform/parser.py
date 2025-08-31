@@ -1,11 +1,11 @@
+"""Terraform parser using tflocal and LocalStack for complete resource deployment."""
+
 import json
 import logging
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
-# Import the base class from core
 from src.core.common.base_parser import BaseSourceFileParser
 
 logger = logging.getLogger(__name__)
@@ -13,283 +13,380 @@ logger = logging.getLogger(__name__)
 
 class TerraformParser(BaseSourceFileParser):
     """
-    A parser for Terraform projects that leverages the Terraform CLI.
+    Terraform parser that uses tflocal to deploy and extract complete resource state.
 
-    This parser does not read .tf files directly. Instead, it runs
-    'terraform plan' and 'terraform show -json' to obtain a single
-    JSON object representing the planned state of the entire
-    infrastructure. This approach is much more robust because it
-    automatically handles variables, modules, and Terraform's internal logic.
+    This parser executes Terraform commands through tflocal to deploy resources
+    to LocalStack, then extracts the complete state with all computed attributes
+    and relationships for TOSCA mapping.
     """
 
-    def __init__(self, terraform_binary: str = "terraform", **kwargs):
+    def __init__(self, encoding: str = "utf-8"):
         """
-        Initializes the Terraform parser.
+        Initialize the Terraform parser.
 
         Args:
-            terraform_binary: Path to the terraform binary (default: "terraform")
+            encoding: File encoding to use when reading files
         """
-        super().__init__(**kwargs)
-        self.terraform_binary = terraform_binary
+        super().__init__(encoding)
+        self._logger = logger.getChild(self.__class__.__name__)
 
     def get_supported_extensions(self) -> list[str]:
         """
-        Indicates that this parser is interested in .tf files for discovery,
-        even though it will operate on the containing directory.
-        """
-        return [".tf"]
-
-    def can_parse(self, path: Path) -> bool:
-        """
-        Checks whether the path is a directory containing Terraform files.
-        """
-        if not path.is_dir():
-            return False
-        # Checks if there are any .tf files in the directory
-        return any(path.glob("*.tf"))
-
-    def parse(self, project_path: Path) -> dict[str, Any]:
-        """
-        Orchestrates the execution of Terraform commands to get the plan in JSON format.
-
-        Args:
-            project_path: The path to the main Terraform project directory.
+        Return supported Terraform file extensions.
 
         Returns:
-            A Python dictionary representing the Terraform plan.
-
-        Raises:
-            FileNotFoundError: If the project directory does not exist.
-            RuntimeError: If the 'terraform' command is not installed or if
-                          the 'init', 'plan', or 'show' commands fail.
+            List of supported file extensions
         """
-        self._logger.info(f"Starting parsing of Terraform project in: {project_path}")
+        return [".tf", ".tf.json"]
 
-        if not self.can_parse(project_path):
-            raise ValueError(
-                f"The path '{project_path}' is not a valid Terraform directory."
-            )
-
-        # Check for existing cached JSON plan
-        json_plan_file = project_path / "terraform-plan.json"
-        if json_plan_file.exists():
-            self._logger.info(
-                "Found existing JSON plan file: %s, loading from cache",
-                json_plan_file.name,
-            )
-            try:
-                with json_plan_file.open("r", encoding="utf-8") as f:
-                    cached_plan = json.load(f)
-                self._logger.info("Successfully loaded plan from cached JSON file")
-                return cached_plan
-            except (OSError, json.JSONDecodeError) as e:
-                self._logger.warning(
-                    f"Failed to load cached JSON plan: {e}. Will regenerate."
-                )
-                # Continue to regenerate the plan
-
-        # 1. Check that the Terraform CLI is installed
-        self._check_terraform_binary()
-
-        try:
-            # Check if there's already a plan file (tfplan, plan.tfplan, etc.)
-            existing_plan_files = list(project_path.glob("*.tfplan"))
-            if existing_plan_files:
-                # Use the first existing plan file
-                plan_file = existing_plan_files[0]
-                self._logger.info(f"Found existing plan file: {plan_file.name}")
-            else:
-                # Create a new plan file
-                import time
-
-                timestamp = int(time.time())
-                plan_file = project_path / f"tf-parser-plan-{timestamp}.tfplan"
-
-                # 2. Run 'terraform init'
-                self._logger.debug(f"Running 'terraform init' in {project_path}")
-                self._run_command(
-                    ["terraform", "init", "-input=false", "-no-color"], cwd=project_path
-                )
-
-                # 3. Run 'terraform plan'
-                self._logger.debug(f"Running 'terraform plan' in {project_path}")
-                self._run_command(
-                    [
-                        "terraform",
-                        "plan",
-                        f"-out={plan_file}",
-                        "-input=false",
-                        "-no-color",
-                    ],
-                    cwd=project_path,
-                )
-
-            # 4. Run 'terraform show -json'
-            self._logger.debug(
-                f"Running 'terraform show' to extract JSON from {plan_file.name}"
-            )
-            json_output = self._run_command(
-                ["terraform", "show", "-json", str(plan_file)], cwd=project_path
-            )
-
-            # 5. Save the JSON output to file for future use with proper formatting
-            try:
-                # Parse and re-format the JSON for better readability
-                parsed_json = json.loads(json_output)
-                with json_plan_file.open("w", encoding="utf-8") as f:
-                    json.dump(
-                        parsed_json, f, indent=2, ensure_ascii=False, sort_keys=True
-                    )
-                self._logger.info(
-                    f"Saved formatted JSON plan to: {json_plan_file.name}"
-                )
-            except (OSError, json.JSONDecodeError) as e:
-                self._logger.warning(f"Failed to save JSON plan to file: {e}")
-                # Fallback: save raw output if JSON parsing fails
-                try:
-                    with json_plan_file.open("w", encoding="utf-8") as f:
-                        f.write(json_output)
-                    self._logger.info(f"Saved raw JSON plan to: {json_plan_file.name}")
-                except OSError:
-                    pass  # Give up on saving
-
-            # 6. Clean up the plan file only if we created it (not existing ones)
-            if plan_file.name.startswith("tf-parser-plan-"):
-                try:
-                    plan_file.unlink()
-                except Exception as e:
-                    self._logger.warning(f"Unable to remove plan file {plan_file}: {e}")
-
-            self._logger.info(
-                "Parsing of the Terraform project completed successfully."
-            )
-            return json.loads(json_output)
-
-        except (
-            subprocess.CalledProcessError,
-            json.JSONDecodeError,
-            FileNotFoundError,
-        ) as e:
-            # Cleanup plan file even in case of error
-            try:
-                if "plan_file" in locals() and plan_file.exists():
-                    plan_file.unlink()
-            except Exception:
-                pass  # Ignore cleanup errors
-
-            # Use the base class's error handler to log and re-raise
-            return self._handle_parse_error(e, project_path)
-        except Exception as e:
-            self._logger.error(
-                f"Unexpected error during parsing of {project_path}: {e}"
-            )
-            raise
-
-    def _check_terraform_binary(self) -> None:
-        """Checks that the Terraform binary is available and working."""
-        if not shutil.which(self.terraform_binary):
-            self._logger.error(
-                "Command '%s' not found. Make sure it is installed and in your PATH.",
-                self.terraform_binary,
-            )
-            raise RuntimeError(f"Terraform CLI '{self.terraform_binary}' not found.")
-
-        # Quick version check
-        try:
-            result = subprocess.run(
-                [self.terraform_binary, "version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                encoding="utf-8",
-            )
-            if result.returncode == 0:
-                self._logger.debug(
-                    f"Terraform available: {result.stdout.strip().splitlines()[0]}"
-                )
-            else:
-                raise RuntimeError(f"Terraform check failed: {result.stderr}")
-        except subprocess.TimeoutExpired as err:
-            raise RuntimeError("Timeout during Terraform check") from err
-
-    def _run_command(self, command: list[str], cwd: Path, timeout: int = 300) -> str:
+    def can_parse(self, file_path: Path) -> bool:
         """
-        Helper to run a shell command and handle errors.
+        Check if this parser can handle the given path.
+
+        For Terraform, we expect a directory containing .tf files.
 
         Args:
-            command: List of command components
-            cwd: Working directory
-            timeout: Timeout in seconds (default: 5 minutes)
+            file_path: Path to check (should be a directory)
+
+        Returns:
+            True if the path is a directory containing .tf files
         """
-        try:
-            process = subprocess.run(
-                command,
-                cwd=str(cwd),
-                check=True,  # Raise exception if command fails
-                capture_output=True,
-                text=True,  # Decode stdout/stderr as text
-                encoding="utf-8",
-                timeout=timeout,
-            )
-            return process.stdout
-        except subprocess.TimeoutExpired as err:
-            self._logger.error(
-                f"Command timed out after {timeout}s: {' '.join(command)}"
-            )
-            raise RuntimeError(f"Command timeout: {' '.join(command)}") from err
-        except subprocess.CalledProcessError as e:
-            self._logger.error(f"Command failed: {' '.join(command)}")
-            self._logger.error(f"Error: {e.stderr}")
-            raise
+        if not file_path.exists():
+            return False
 
-    # --- Override base class methods not applicable ---
+        # If it's a directory, check for .tf files
+        if file_path.is_dir():
+            tf_files = list(file_path.glob("*.tf")) + list(file_path.glob("*.tf.json"))
+            return len(tf_files) > 0
 
-    def _read_file(self, file_path: Path) -> str:
-        """Not applicable for this parser, logic is in `parse`."""
-        raise NotImplementedError(
-            "TerraformParser operates on directories, not single files."
-        )
+        # If it's a file, check the extension
+        return file_path.suffix in self.get_supported_extensions()
 
     def _parse_content(self, content: str, file_path: Path) -> dict[str, Any]:
-        """Not applicable for this parser, logic is in `parse`."""
-        raise NotImplementedError(
-            "TerraformParser does not parse content of single files."
-        )
+        """
+        Parse Terraform content by deploying with tflocal and extracting state.
+
+        Note: For Terraform directories, this method is called with empty content
+        since we work with the directory directly.
+
+        Args:
+            content: File content (unused for directory-based parsing)
+            file_path: Path to the Terraform directory or file
+
+        Returns:
+            Consolidated state data containing all deployed resources
+        """
+        # For Terraform, we work with directories, not individual files
+        if file_path.is_file():
+            terraform_dir = file_path.parent
+        else:
+            terraform_dir = file_path
+
+        return self._deploy_and_extract_state(terraform_dir)
+
+    def _deploy_and_extract_state(self, terraform_dir: Path) -> dict[str, Any]:
+        """
+        Deploy Terraform configuration and extract both plan and state data.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+
+        Returns:
+            Combined data with both plan and state information
+        """
+        self._logger.info(f"Starting Terraform deployment for: {terraform_dir}")
+
+        try:
+            # Change to the Terraform directory
+            original_cwd = Path.cwd()
+
+            # Execute Terraform commands in sequence
+            self._run_terraform_init(terraform_dir)
+            self._run_terraform_plan(terraform_dir)
+
+            # Extract plan JSON (contains variable definitions and references)
+            plan_data = self._extract_plan_json(terraform_dir)
+
+            self._run_terraform_apply(terraform_dir)
+
+            # Extract the complete state (contains resolved values)
+            state_data = self._extract_complete_state(terraform_dir)
+
+            # Combine plan and state data
+            combined_data = {
+                "plan": plan_data,
+                "state": state_data,
+                # For backward compatibility, include state data at root level
+                **state_data,
+            }
+
+            self._logger.info(
+                "Successfully deployed and extracted Terraform plan and state"
+            )
+            return combined_data
+
+        except subprocess.CalledProcessError as e:
+            self._logger.error(f"Terraform command failed: {e}")
+            raise ValueError(f"Terraform deployment failed: {e}") from e
+        except Exception as e:
+            self._logger.error(f"Failed to deploy Terraform: {e}")
+            raise
+        finally:
+            # Always return to original directory
+            if "original_cwd" in locals():
+                try:
+                    original_cwd.cwd()
+                except Exception:
+                    pass
+
+    def _run_terraform_init(self, terraform_dir: Path) -> None:
+        """
+        Run terraform init to initialize the working directory.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+        """
+        self._logger.info("Running tflocal init...")
+
+        cmd = ["tflocal", "init"]
+        self._run_command(cmd, terraform_dir)
+
+    def _run_terraform_plan(self, terraform_dir: Path) -> None:
+        """
+        Run terraform plan to create execution plan.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+        """
+        self._logger.info("Running tflocal plan...")
+
+        cmd = ["tflocal", "plan"]
+        self._run_command(cmd, terraform_dir)
+
+    def _run_terraform_apply(self, terraform_dir: Path) -> None:
+        """
+        Run terraform apply to deploy resources.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+        """
+        self._logger.info("Running tflocal apply...")
+
+        cmd = ["tflocal", "apply", "-auto-approve"]
+        self._run_command(cmd, terraform_dir)
+
+    def _extract_plan_json(self, terraform_dir: Path) -> dict[str, Any]:
+        """
+        Extract plan JSON information with variable definitions and references.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+
+        Returns:
+            Complete plan data with variables and configuration
+        """
+        self._logger.info("Extracting Terraform plan JSON...")
+
+        # First, destroy the existing resources to get a fresh plan
+        self._logger.debug("Destroying existing resources for clean plan...")
+        try:
+            destroy_cmd = ["tflocal", "destroy", "-auto-approve"]
+            self._run_command(destroy_cmd, terraform_dir)
+        except subprocess.CalledProcessError:
+            self._logger.warning("Destroy failed, continuing with plan extraction")
+
+        # Get the plan in JSON format with -out to save plan file
+        plan_file = terraform_dir / "terraform.plan"
+        cmd = ["tflocal", "plan", "-out", str(plan_file)]
+        self._run_command(cmd, terraform_dir)
+
+        # Extract JSON from the saved plan
+        cmd = ["tflocal", "show", "-json", str(plan_file)]
+        result = self._run_command(cmd, terraform_dir, capture_output=True)
+
+        try:
+            plan_data = json.loads(result.stdout)
+            configuration = plan_data.get("configuration", {})
+            root_module = configuration.get("root_module", {})
+            variables = root_module.get("variables", {})
+            self._logger.debug(f"Extracted plan with {len(variables)} variables")
+
+            # Clean up the plan file
+            if plan_file.exists():
+                plan_file.unlink()
+
+            return plan_data
+        except json.JSONDecodeError as e:
+            self._logger.error(f"Failed to parse plan JSON: {e}")
+            raise ValueError(f"Invalid JSON in Terraform plan: {e}") from e
+
+    def _extract_complete_state(self, terraform_dir: Path) -> dict[str, Any]:
+        """
+        Extract complete state information after deployment.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+
+        Returns:
+            Complete state data with all resources
+        """
+        self._logger.info("Extracting complete Terraform state...")
+
+        # Get the state in JSON format
+        cmd = ["tflocal", "show", "-json"]
+        result = self._run_command(cmd, terraform_dir, capture_output=True)
+
+        try:
+            state_data = json.loads(result.stdout)
+            values = state_data.get("values", {})
+            root_module = values.get("root_module", {})
+            resources = root_module.get("resources", [])
+            self._logger.debug(f"Extracted state with {len(resources)} resources")
+            return state_data
+        except json.JSONDecodeError as e:
+            self._logger.error(f"Failed to parse state JSON: {e}")
+            raise ValueError(f"Invalid JSON in Terraform state: {e}") from e
+
+    def _run_command(
+        self, cmd: list[str], working_dir: Path, capture_output: bool = False
+    ) -> subprocess.CompletedProcess:
+        """
+        Run a shell command in the specified directory.
+
+        Args:
+            cmd: Command to run as list of strings
+            working_dir: Directory to run command in
+            capture_output: Whether to capture stdout/stderr
+
+        Returns:
+            CompletedProcess object
+
+        Raises:
+            subprocess.CalledProcessError: If command fails
+        """
+        self._logger.debug(f"Running command: {' '.join(cmd)} in {working_dir}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=working_dir,
+                check=True,
+                capture_output=capture_output,
+                text=True,
+                timeout=300,  # 5 minute timeout
+            )
+
+            if capture_output:
+                self._logger.debug(f"Command output: {result.stdout[:500]}...")
+
+            return result
+
+        except subprocess.TimeoutExpired as e:
+            self._logger.error(f"Command timed out: {' '.join(cmd)}")
+            raise ValueError(f"Terraform command timed out: {' '.join(cmd)}") from e
+        except subprocess.CalledProcessError as e:
+            self._logger.error(
+                f"Command failed with exit code {e.returncode}: {' '.join(cmd)}"
+            )
+            if e.stderr:
+                self._logger.error(f"Error output: {e.stderr}")
+            raise
 
     def validate_file(self, file_path: Path) -> None:
         """
-        Override validation to handle directories instead of files.
+        Validate that the path exists and contains Terraform files.
+
+        Args:
+            file_path: Path to validate
+
+        Raises:
+            FileNotFoundError: If path doesn't exist
+            ValueError: If path doesn't contain valid Terraform files
         """
         if not file_path.exists():
             raise FileNotFoundError(f"Path not found: {file_path}")
 
-        if not file_path.is_dir():
-            raise ValueError(
-                f"TerraformParser requires a directory, received: {file_path}"
-            )
+        # For directories, check for .tf files
+        if file_path.is_dir():
+            tf_files = list(file_path.glob("*.tf")) + list(file_path.glob("*.tf.json"))
+            if not tf_files:
+                raise ValueError(f"No Terraform files found in directory: {file_path}")
+            return
 
-        if not self.can_parse(file_path):
-            raise ValueError(f"Directory does not contain Terraform files: {file_path}")
+        # For files, use parent validation
+        super().validate_file(file_path)
 
-    def clear_plan_cache(self, project_path: Path) -> bool:
+    def parse(self, file_path: Path) -> dict[str, Any]:
         """
-        Removes the cached JSON plan file to force regeneration on next parse.
+        Parse Terraform directory by deploying and extracting state.
 
         Args:
-            project_path: The path to the Terraform project directory.
+            file_path: Path to Terraform directory or file
 
         Returns:
-            True if cache was cleared, False if no cache existed.
+            Complete state data with all deployed resources
         """
-        json_plan_file = project_path / "terraform-plan.json"
-        if json_plan_file.exists():
-            try:
-                json_plan_file.unlink()
-                self._logger.info(f"Cleared cached JSON plan: {json_plan_file.name}")
-                return True
-            except OSError as e:
-                self._logger.error(f"Failed to clear cached JSON plan: {e}")
-                raise
+        self._logger.info(f"Parsing Terraform configuration: {file_path}")
+
+        # Validate the path
+        self.validate_file(file_path)
+
+        # For Terraform, we work with directories
+        if file_path.is_file():
+            terraform_dir = file_path.parent
         else:
-            self._logger.debug("No cached JSON plan to clear")
-            return False
+            terraform_dir = file_path
+
+        try:
+            # Deploy and extract state
+            state_data = self._deploy_and_extract_state(terraform_dir)
+
+            self._logger.info(
+                f"Successfully parsed Terraform configuration: {terraform_dir}"
+            )
+            return state_data
+
+        except Exception as e:
+            return self._handle_parse_error(e, file_path)
+
+    def _handle_parse_error(self, error: Exception, file_path: Path) -> dict[str, Any]:
+        """
+        Handle parsing errors with cleanup.
+
+        Args:
+            error: The exception that occurred
+            file_path: Path that failed to parse
+
+        Raises:
+            Exception: Re-raises the original exception
+        """
+        self._logger.error(f"Failed to parse {file_path}: {error}")
+
+        # Attempt cleanup on error
+        try:
+            if file_path.is_file():
+                terraform_dir = file_path.parent
+            else:
+                terraform_dir = file_path
+
+            self._cleanup_on_error(terraform_dir)
+        except Exception as cleanup_error:
+            self._logger.warning(f"Cleanup failed: {cleanup_error}")
+
+        raise error
+
+    def _cleanup_on_error(self, terraform_dir: Path) -> None:
+        """
+        Cleanup Terraform state on error.
+
+        Args:
+            terraform_dir: Directory to cleanup
+        """
+        self._logger.info("Attempting to cleanup Terraform state on error...")
+
+        try:
+            cmd = ["tflocal", "destroy", "-auto-approve"]
+            self._run_command(cmd, terraform_dir)
+            self._logger.info("Successfully cleaned up Terraform state")
+        except Exception as e:
+            self._logger.warning(f"Cleanup failed, manual cleanup may be required: {e}")

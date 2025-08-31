@@ -39,7 +39,7 @@ class TerraformMapper(BaseResourceMapper):
         """
         self._current_parsed_data = parsed_data
 
-        # Initialize variable context
+        # Initialize variable context with combined plan and state data
         self._logger.info("Initializing variable context...")
         self._variable_context = VariableContext(parsed_data)
 

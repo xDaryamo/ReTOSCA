@@ -5,7 +5,6 @@ from typing import Any
 
 import pytest
 
-import src.plugins.terraform.mappers.aws.aws_subnet as aws_subnet_mod
 from src.plugins.terraform.mappers.aws.aws_subnet import AWSSubnetMapper
 
 
@@ -125,31 +124,19 @@ class TestMapResource:
             },
         }
 
-        # Provide a fake TerraformMapper in the module namespace and ensure
-        # the call happens with a 'self' instance on the stack.
-        class FakeTerraformMapper:
-            def __init__(self, parsed: dict[str, Any]) -> None:
-                self._parsed = parsed
-
-            def get_current_parsed_data(self) -> dict[str, Any]:
-                return self._parsed
-
-            @staticmethod
-            def extract_terraform_references(
-                res: dict[str, Any], parsed: dict[str, Any]
-            ):
+        # Create a fake context that returns the expected reference
+        class FakeContext:
+            def extract_terraform_references(self, resource_data: dict[str, Any]):
                 return [("vpc_id", "aws_vpc.main", "tosca.relationships.DependsOn")]
 
-            def run(self) -> None:
-                # The mapper call is inside this method so that
-                # inspect.stack() sees 'self' as FakeTerraformMapper.
-                m.map_resource(res_name, res_type, data, b)
+            def get_resolved_values(
+                self, resource_data: dict[str, Any], context: str = "property"
+            ):
+                # Return the original values for testing
+                return resource_data.get("values", {})
 
-        monkeypatch.setattr(
-            aws_subnet_mod, "TerraformMapper", FakeTerraformMapper, raising=True
-        )
-
-        FakeTerraformMapper({"ok": True}).run()
+        context = FakeContext()
+        m.map_resource(res_name, res_type, data, b, context)
 
         # Node name must be normalized by BaseResourceMapper
         node_name = "aws_subnet_subnet_1_0"
@@ -182,7 +169,7 @@ class TestMapResource:
         # One dependency requirement to generated VPC node name
         reqs = node["requirements"]
         assert len(reqs) == 1
-        dep = reqs[0]["dependency"]
+        dep = reqs[0]["vpc_id"]
         assert dep["relationship"] == "tosca.relationships.DependsOn"
         assert dep["node"] == "aws_vpc_main"
 
@@ -208,8 +195,8 @@ class TestMapResource:
                 "availability_zone": "eu-west-1b",
             }
         }
-        # Call directly (no TerraformMapper in the stack)
-        m.map_resource("aws_subnet.other", "aws_subnet", data, b)
+        # Call without context
+        m.map_resource("aws_subnet.other", "aws_subnet", data, b, None)
 
         node_name = "aws_subnet_other"
         assert node_name in b.nodes
@@ -221,7 +208,8 @@ class TestMapResource:
         assert node["requirements"] == []
         # Warning logged
         assert any(
-            "Unable to access Terraform plan data" in r.message for r in caplog.records
+            "No context provided to detect dependencies" in r.message
+            for r in caplog.records
         )
 
     def test_network_name_from_az_when_no_name_tag(self) -> None:

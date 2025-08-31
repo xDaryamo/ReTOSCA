@@ -70,8 +70,13 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         """
         logger.info("Mapping DB Instance resource: '%s'", resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
+
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -93,7 +98,13 @@ class AWSDBInstanceMapper(SingleResourceMapper):
 
         # Create the DBMS node
         self._create_dbms_node(
-            builder, dbms_node_name, clean_name, resource_type, resource_data, values
+            builder,
+            dbms_node_name,
+            clean_name,
+            resource_type,
+            resource_data,
+            values,
+            context,
         )
 
         # Create the Database node
@@ -171,16 +182,23 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         )
 
         # Debug: log mapped properties
+        if context:
+            debug_metadata_values = context.get_resolved_values(
+                resource_data, "metadata"
+            )
+        else:
+            debug_metadata_values = resource_data.get("values", {})
+
         logger.debug(
             "DBMS node properties - Engine: %s, Version: %s, Class: %s",
-            values.get("engine"),
-            values.get("engine_version"),
-            values.get("instance_class"),
+            debug_metadata_values.get("engine"),
+            debug_metadata_values.get("engine_version"),
+            debug_metadata_values.get("instance_class"),
         )
         logger.debug(
             "Database node properties - Name: %s, User: %s",
-            values.get("db_name"),
-            values.get("username"),
+            debug_metadata_values.get("db_name"),
+            debug_metadata_values.get("username"),
         )
 
     def _create_dbms_node(
@@ -191,9 +209,16 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         resource_type: str,
         resource_data: dict[str, Any],
         values: dict[str, Any],
+        context: "TerraformMappingContext | None" = None,
     ):
         """Create and configure the DBMS node."""
         dbms_node = builder.add_node(name=node_name, node_type="DBMS")
+
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
 
         # Build metadata
         metadata: dict[str, Any] = {
@@ -207,70 +232,78 @@ class AWSDBInstanceMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # Engine information
-        engine = values.get("engine")
-        if engine:
+        # Engine information - use metadata values for concrete resolution
+        metadata_engine = metadata_values.get("engine")
+        if metadata_engine:
             # Map to standardized engine type
-            standardized_engine = self._engine_type_mapping.get(engine, engine)
-            metadata["aws_engine"] = engine
+            standardized_engine = self._engine_type_mapping.get(
+                metadata_engine, metadata_engine
+            )
+            metadata["aws_engine"] = metadata_engine
             metadata["engine_type"] = standardized_engine
 
         # Engine version
-        engine_version = values.get("engine_version")
-        if engine_version:
-            metadata["aws_engine_version"] = engine_version
+        metadata_engine_version = metadata_values.get("engine_version")
+        if metadata_engine_version:
+            metadata["aws_engine_version"] = metadata_engine_version
 
         # Instance class
-        instance_class = values.get("instance_class")
-        if instance_class:
-            metadata["aws_instance_class"] = instance_class
+        metadata_instance_class = metadata_values.get("instance_class")
+        if metadata_instance_class:
+            metadata["aws_instance_class"] = metadata_instance_class
 
         # License model
-        license_model = values.get("license_model")
-        if license_model:
-            metadata["aws_license_model"] = license_model
+        metadata_license_model = metadata_values.get("license_model")
+        if metadata_license_model:
+            metadata["aws_license_model"] = metadata_license_model
 
         # Multi-AZ configuration
-        multi_az = values.get("multi_az")
-        if multi_az is not None:
-            metadata["aws_multi_az"] = multi_az
+        metadata_multi_az = metadata_values.get("multi_az")
+        if metadata_multi_az is not None:
+            metadata["aws_multi_az"] = metadata_multi_az
 
         # Storage information
-        allocated_storage = values.get("allocated_storage")
-        if allocated_storage:
-            metadata["aws_allocated_storage"] = allocated_storage
+        metadata_allocated_storage = metadata_values.get("allocated_storage")
+        if metadata_allocated_storage:
+            metadata["aws_allocated_storage"] = metadata_allocated_storage
 
-        storage_type = values.get("storage_type")
-        if storage_type:
-            metadata["aws_storage_type"] = storage_type
+        metadata_storage_type = metadata_values.get("storage_type")
+        if metadata_storage_type:
+            metadata["aws_storage_type"] = metadata_storage_type
 
-        storage_encrypted = values.get("storage_encrypted")
-        if storage_encrypted is not None:
-            metadata["aws_storage_encrypted"] = storage_encrypted
+        metadata_storage_encrypted = metadata_values.get("storage_encrypted")
+        if metadata_storage_encrypted is not None:
+            metadata["aws_storage_encrypted"] = metadata_storage_encrypted
 
         # Backup configuration
-        backup_retention_period = values.get("backup_retention_period")
-        if backup_retention_period is not None:
-            metadata["aws_backup_retention_period"] = backup_retention_period
+        metadata_backup_retention_period = metadata_values.get(
+            "backup_retention_period"
+        )
+        if metadata_backup_retention_period is not None:
+            metadata["aws_backup_retention_period"] = metadata_backup_retention_period
 
-        backup_window = values.get("backup_window")
-        if backup_window:
-            metadata["aws_backup_window"] = backup_window
+        metadata_backup_window = metadata_values.get("backup_window")
+        if metadata_backup_window:
+            metadata["aws_backup_window"] = metadata_backup_window
 
         # Maintenance window
-        maintenance_window = values.get("maintenance_window")
-        if maintenance_window:
-            metadata["aws_maintenance_window"] = maintenance_window
+        metadata_maintenance_window = metadata_values.get("maintenance_window")
+        if metadata_maintenance_window:
+            metadata["aws_maintenance_window"] = metadata_maintenance_window
 
         # Monitoring
-        monitoring_interval = values.get("monitoring_interval")
-        if monitoring_interval is not None:
-            metadata["aws_monitoring_interval"] = monitoring_interval
+        metadata_monitoring_interval = metadata_values.get("monitoring_interval")
+        if metadata_monitoring_interval is not None:
+            metadata["aws_monitoring_interval"] = metadata_monitoring_interval
 
         # Performance Insights
-        performance_insights_enabled = values.get("performance_insights_enabled")
-        if performance_insights_enabled is not None:
-            metadata["aws_performance_insights_enabled"] = performance_insights_enabled
+        metadata_performance_insights_enabled = metadata_values.get(
+            "performance_insights_enabled"
+        )
+        if metadata_performance_insights_enabled is not None:
+            metadata["aws_performance_insights_enabled"] = (
+                metadata_performance_insights_enabled
+            )
 
         # Port (set as DBMS property)
         port = values.get("port")
@@ -292,42 +325,46 @@ class AWSDBInstanceMapper(SingleResourceMapper):
                 "sqlserver-web": 1433,
                 "mariadb": 3306,
             }
-            engine = values.get("engine")
-            if engine and engine in default_ports:
-                dbms_node.with_property("port", default_ports[engine])
-                metadata["aws_default_port"] = default_ports[engine]
+            metadata_engine_for_port = metadata_values.get("engine")
+            if metadata_engine_for_port and metadata_engine_for_port in default_ports:
+                dbms_node.with_property("port", default_ports[metadata_engine_for_port])
+                metadata["aws_default_port"] = default_ports[metadata_engine_for_port]
 
         # Root password (if not using managed password)
         password = values.get("password")
-        manage_master_user_password = values.get("manage_master_user_password")
-        if password and not manage_master_user_password:
+        metadata_manage_master_user_password = metadata_values.get(
+            "manage_master_user_password"
+        )
+        if password and not metadata_manage_master_user_password:
             dbms_node.with_property("root_password", password)
-        elif manage_master_user_password:
+        elif metadata_manage_master_user_password:
             metadata["aws_managed_master_password"] = True
 
         # Security groups and networking
-        vpc_security_group_ids = values.get("vpc_security_group_ids", [])
-        if vpc_security_group_ids:
-            metadata["aws_vpc_security_group_ids"] = vpc_security_group_ids
+        metadata_vpc_security_group_ids = metadata_values.get(
+            "vpc_security_group_ids", []
+        )
+        if metadata_vpc_security_group_ids:
+            metadata["aws_vpc_security_group_ids"] = metadata_vpc_security_group_ids
 
-        db_subnet_group_name = values.get("db_subnet_group_name")
-        if db_subnet_group_name:
-            metadata["aws_db_subnet_group_name"] = db_subnet_group_name
+        metadata_db_subnet_group_name = metadata_values.get("db_subnet_group_name")
+        if metadata_db_subnet_group_name:
+            metadata["aws_db_subnet_group_name"] = metadata_db_subnet_group_name
 
         # Availability zone
-        availability_zone = values.get("availability_zone")
-        if availability_zone:
-            metadata["aws_availability_zone"] = availability_zone
+        metadata_availability_zone = metadata_values.get("availability_zone")
+        if metadata_availability_zone:
+            metadata["aws_availability_zone"] = metadata_availability_zone
 
         # Tags
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Attach metadata to the node
         dbms_node.with_metadata(metadata)
@@ -349,6 +386,12 @@ class AWSDBInstanceMapper(SingleResourceMapper):
     ):
         """Create and configure the Database node."""
         database_node = builder.add_node(name=node_name, node_type="Database")
+
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
 
         # Build metadata
         metadata: dict[str, Any] = {
@@ -421,10 +464,12 @@ class AWSDBInstanceMapper(SingleResourceMapper):
                 "sqlserver-web": 1433,
                 "mariadb": 3306,
             }
-            engine = values.get("engine")
-            if engine and engine in default_ports:
-                database_node.with_property("port", default_ports[engine])
-                metadata["aws_default_port"] = default_ports[engine]
+            metadata_engine_for_port = metadata_values.get("engine")
+            if metadata_engine_for_port and metadata_engine_for_port in default_ports:
+                database_node.with_property(
+                    "port", default_ports[metadata_engine_for_port]
+                )
+                metadata["aws_default_port"] = default_ports[metadata_engine_for_port]
             else:
                 # Fallback to a generic default port if engine is unknown
                 database_node.with_property("port", 3306)
@@ -437,54 +482,62 @@ class AWSDBInstanceMapper(SingleResourceMapper):
 
         # Password (if not using managed password)
         password = values.get("password")
-        manage_master_user_password = values.get("manage_master_user_password")
-        if password and not manage_master_user_password:
+        metadata_manage_master_user_password = metadata_values.get(
+            "manage_master_user_password"
+        )
+        if password and not metadata_manage_master_user_password:
             database_node.with_property("password", password)
 
         # Identifier
-        identifier = values.get("identifier")
-        if identifier:
-            metadata["aws_identifier"] = identifier
+        metadata_identifier = metadata_values.get("identifier")
+        if metadata_identifier:
+            metadata["aws_identifier"] = metadata_identifier
 
         # Character set (for Oracle and SQL Server)
-        character_set_name = values.get("character_set_name")
-        if character_set_name:
-            metadata["aws_character_set_name"] = character_set_name
+        metadata_character_set_name = metadata_values.get("character_set_name")
+        if metadata_character_set_name:
+            metadata["aws_character_set_name"] = metadata_character_set_name
 
         # National character set (for Oracle)
-        nchar_character_set_name = values.get("nchar_character_set_name")
-        if nchar_character_set_name:
-            metadata["aws_nchar_character_set_name"] = nchar_character_set_name
+        metadata_nchar_character_set_name = metadata_values.get(
+            "nchar_character_set_name"
+        )
+        if metadata_nchar_character_set_name:
+            metadata["aws_nchar_character_set_name"] = metadata_nchar_character_set_name
 
         # Timezone (for SQL Server)
-        timezone = values.get("timezone")
-        if timezone:
-            metadata["aws_timezone"] = timezone
+        metadata_timezone = metadata_values.get("timezone")
+        if metadata_timezone:
+            metadata["aws_timezone"] = metadata_timezone
 
         # Deletion protection
-        deletion_protection = values.get("deletion_protection")
-        if deletion_protection is not None:
-            metadata["aws_deletion_protection"] = deletion_protection
+        metadata_deletion_protection = metadata_values.get("deletion_protection")
+        if metadata_deletion_protection is not None:
+            metadata["aws_deletion_protection"] = metadata_deletion_protection
 
         # IAM database authentication
-        iam_db_auth_enabled = values.get("iam_database_authentication_enabled")
-        if iam_db_auth_enabled is not None:
-            metadata["aws_iam_database_authentication_enabled"] = iam_db_auth_enabled
+        metadata_iam_db_auth_enabled = metadata_values.get(
+            "iam_database_authentication_enabled"
+        )
+        if metadata_iam_db_auth_enabled is not None:
+            metadata["aws_iam_database_authentication_enabled"] = (
+                metadata_iam_db_auth_enabled
+            )
 
         # Public accessibility
-        publicly_accessible = values.get("publicly_accessible")
-        if publicly_accessible is not None:
-            metadata["aws_publicly_accessible"] = publicly_accessible
+        metadata_publicly_accessible = metadata_values.get("publicly_accessible")
+        if metadata_publicly_accessible is not None:
+            metadata["aws_publicly_accessible"] = metadata_publicly_accessible
 
         # Tags
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Attach metadata to the node
         database_node.with_metadata(metadata)

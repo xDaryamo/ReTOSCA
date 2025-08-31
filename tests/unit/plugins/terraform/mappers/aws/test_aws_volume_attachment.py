@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mapper import TerraformMapper
+from src.plugins.terraform.context import TerraformMappingContext
 from src.plugins.terraform.mappers.aws.aws_volume_attachment import (
     AWSVolumeAttachmentMapper,
 )
@@ -54,22 +54,6 @@ class FakeBuilder:
         return self.nodes[name]
 
 
-# Helper to ensure a TerraformMapper is on the call stack so that
-# the mapper can extract references via inspect.stack().
-class Harness(TerraformMapper):
-    def invoke(
-        self,
-        mapper: AWSVolumeAttachmentMapper,
-        resource_name: str,
-        resource_type: str,
-        resource_data: dict[str, Any],
-        builder: FakeBuilder,
-        parsed_data: dict[str, Any],
-    ) -> None:
-        self._current_parsed_data = parsed_data
-        mapper.map_resource(resource_name, resource_type, resource_data, builder)
-
-
 class TestCanMap:
     def test_true_for_attachment(self) -> None:
         m = AWSVolumeAttachmentMapper()
@@ -85,7 +69,9 @@ class TestValidationGuards:
         caplog.set_level("WARNING")
         m = AWSVolumeAttachmentMapper()
         b = FakeBuilder()
-        m.map_resource("aws_volume_attachment.att", "aws_volume_attachment", {}, b)
+        m.map_resource(
+            "aws_volume_attachment.att", "aws_volume_attachment", {}, b, None
+        )
         # no nodes modified
         assert all(len(n.requirements) == 0 for n in b.nodes.values())
         assert any("has no 'values' section" in r.message for r in caplog.records)
@@ -95,7 +81,9 @@ class TestValidationGuards:
         m = AWSVolumeAttachmentMapper()
         b = FakeBuilder()
         rd = {"address": "aws_volume_attachment.att", "values": {"device_name": ""}}
-        m.map_resource("aws_volume_attachment.att", "aws_volume_attachment", rd, b)
+        m.map_resource(
+            "aws_volume_attachment.att", "aws_volume_attachment", rd, b, None
+        )
         assert all(len(n.requirements) == 0 for n in b.nodes.values())
         assert any("No device_name found" in r.message for r in caplog.records)
 
@@ -110,7 +98,11 @@ class TestValidationGuards:
             "address": "aws_volume_attachment.att",
             "values": {"device_name": "/dev/sdh"},
         }
-        m.map_resource("aws_volume_attachment.att", "aws_volume_attachment", rd, b)
+        # Create context with empty parsed data
+        context = TerraformMappingContext(parsed_data={}, variable_context=None)
+        m.map_resource(
+            "aws_volume_attachment.att", "aws_volume_attachment", rd, b, context
+        )
         assert all(len(n.requirements) == 0 for n in b.nodes.values())
         assert any(
             "Could not resolve instance or volume references" in r.message
@@ -122,7 +114,6 @@ class TestHappyPath:
     def test_adds_local_storage_requirement(self) -> None:
         m = AWSVolumeAttachmentMapper()
         b = FakeBuilder()
-        h = Harness()
 
         # Pre-create the instance and volume nodes that the mapper will link
         inst = b.add_node("aws_instance_web", "Compute")
@@ -152,7 +143,8 @@ class TestHappyPath:
             }
         }
 
-        h.invoke(m, resource_name, resource_type, resource_data, b, parsed)
+        context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
+        m.map_resource(resource_name, resource_type, resource_data, b, context)
 
         # Expect exactly one requirement on the instance node
         reqs = b.nodes["aws_instance_web"].requirements
@@ -172,7 +164,6 @@ class TestHappyPath:
         caplog.set_level("WARNING")
         m = AWSVolumeAttachmentMapper()
         b = FakeBuilder()
-        h = Harness()
 
         # Only volume node exists
         b.add_node("aws_ebs_volume_data", "Storage.BlockStorage")
@@ -197,8 +188,9 @@ class TestHappyPath:
             }
         }
 
-        h.invoke(
-            m, "aws_volume_attachment.ebs_att", "aws_volume_attachment", rd, b, parsed
+        context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
+        m.map_resource(
+            "aws_volume_attachment.ebs_att", "aws_volume_attachment", rd, b, context
         )
 
         # No requirement added
@@ -212,7 +204,6 @@ class TestHappyPath:
         caplog.set_level("WARNING")
         m = AWSVolumeAttachmentMapper()
         b = FakeBuilder()
-        h = Harness()
 
         # Only instance node exists
         b.add_node("aws_instance_web", "Compute")
@@ -237,8 +228,9 @@ class TestHappyPath:
             }
         }
 
-        h.invoke(
-            m, "aws_volume_attachment.ebs_att", "aws_volume_attachment", rd, b, parsed
+        context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
+        m.map_resource(
+            "aws_volume_attachment.ebs_att", "aws_volume_attachment", rd, b, context
         )
 
         # No requirement added

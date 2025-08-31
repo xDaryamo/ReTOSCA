@@ -13,11 +13,19 @@ logger = logging.getLogger(__name__)
 
 
 class AWSVPCSecurityGroupEgressRuleMapper(SingleResourceMapper):
-    """
-    Map a Terraform 'aws_vpc_security_group_egress_rule' resource.
+    """Map a Terraform 'aws_vpc_security_group_egress_rule' resource.
 
     This mapper does not create a separate TOSCA node but modifies the
     existing aws_security_group node by adding egress rule metadata.
+
+    Args:
+        resource_name: Name of the aws_vpc_security_group_egress_rule resource
+        resource_type: Type of the resource
+            (always 'aws_vpc_security_group_egress_rule')
+        resource_data: Resource configuration data from Terraform plan
+        builder: ServiceTemplateBuilder instance for TOSCA template construction
+        context: TerraformMappingContext for dependency resolution and
+            variable handling
     """
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
@@ -41,9 +49,12 @@ class AWSVPCSecurityGroupEgressRuleMapper(SingleResourceMapper):
         Args:
             resource_name: Resource name
                 (e.g. 'aws_vpc_security_group_egress_rule.allow_all_traffic_ipv4')
-            resource_type: Resource type (always 'aws_vpc_security_group_egress_rule')
+            resource_type: Resource type
+                (always 'aws_vpc_security_group_egress_rule')
             resource_data: Resource data from the Terraform plan
             builder: Builder used to construct the TOSCA service template
+            context: TerraformMappingContext for dependency resolution and
+                variable handling
         """
         logger.info(f"Processing egress rule resource: '{resource_name}'")
 
@@ -75,6 +86,7 @@ class AWSVPCSecurityGroupEgressRuleMapper(SingleResourceMapper):
 
         # Add the egress rule to the security group metadata
         self._add_egress_rule_to_node(sg_node, rule_metadata)
+
         logger.info(
             f"Successfully added egress rule: {rule_metadata['rule_id']} "
             f"to security group {sg_ref}"
@@ -93,8 +105,13 @@ class AWSVPCSecurityGroupEgressRuleMapper(SingleResourceMapper):
             Tuple of (security_group_reference, rule_metadata) or
             (None, None) if extraction fails
         """
-        # Get the values from the resource
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
+
         if not values:
             logger.warning(f"Resource '{resource_name}' has no 'values' section.")
             return None, None

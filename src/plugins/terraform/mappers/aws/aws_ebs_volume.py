@@ -29,7 +29,13 @@ class AWSEBSVolumeMapper(SingleResourceMapper):
     ) -> None:
         logger.info(f"Mapping EBS Volume resource: '{resource_name}'")
 
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
+
         if not values:
             logger.warning(
                 f"Resource '{resource_name}' has no 'values' section. Skipping."
@@ -65,6 +71,12 @@ class AWSEBSVolumeMapper(SingleResourceMapper):
         if snapshot_id:
             volume_node.with_property("snapshot_id", snapshot_id)
 
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
         # === Metadata with AWS-specific information ===
         metadata: dict[str, Any] = {}
         metadata["original_resource_type"] = resource_type
@@ -74,76 +86,80 @@ class AWSEBSVolumeMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # Placement information
-        availability_zone = values.get("availability_zone")
-        if availability_zone:
-            metadata["aws_availability_zone"] = availability_zone
+        # Placement information - use metadata values for concrete resolution
+        metadata_availability_zone = metadata_values.get("availability_zone")
+        if metadata_availability_zone:
+            metadata["aws_availability_zone"] = metadata_availability_zone
 
-        region = values.get("region")
-        if region:
-            metadata["aws_region"] = region
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
         # Encryption information
-        encrypted = values.get("encrypted")
-        if encrypted is not None:
-            metadata["aws_encrypted"] = encrypted
+        metadata_encrypted = metadata_values.get("encrypted")
+        if metadata_encrypted is not None:
+            metadata["aws_encrypted"] = metadata_encrypted
 
-        kms_key_id = values.get("kms_key_id")
-        if kms_key_id:
-            metadata["aws_kms_key_id"] = kms_key_id
+        metadata_kms_key_id = metadata_values.get("kms_key_id")
+        if metadata_kms_key_id:
+            metadata["aws_kms_key_id"] = metadata_kms_key_id
 
         # EBS volume type
-        volume_type = values.get("type")
-        if volume_type:
-            metadata["aws_volume_type"] = volume_type
+        metadata_volume_type = metadata_values.get("type")
+        if metadata_volume_type:
+            metadata["aws_volume_type"] = metadata_volume_type
 
         # Performance settings
-        iops = values.get("iops")
-        if iops:
-            metadata["aws_iops"] = iops
+        metadata_iops = metadata_values.get("iops")
+        if metadata_iops:
+            metadata["aws_iops"] = metadata_iops
 
-        throughput = values.get("throughput")
-        if throughput:
-            metadata["aws_throughput"] = throughput
+        metadata_throughput = metadata_values.get("throughput")
+        if metadata_throughput:
+            metadata["aws_throughput"] = metadata_throughput
 
         # Multi-attach capability
-        multi_attach_enabled = values.get("multi_attach_enabled")
-        if multi_attach_enabled is not None:
-            metadata["aws_multi_attach_enabled"] = multi_attach_enabled
+        metadata_multi_attach_enabled = metadata_values.get("multi_attach_enabled")
+        if metadata_multi_attach_enabled is not None:
+            metadata["aws_multi_attach_enabled"] = metadata_multi_attach_enabled
 
         # Outpost deployment
-        outpost_arn = values.get("outpost_arn")
-        if outpost_arn:
-            metadata["aws_outpost_arn"] = outpost_arn
+        metadata_outpost_arn = metadata_values.get("outpost_arn")
+        if metadata_outpost_arn:
+            metadata["aws_outpost_arn"] = metadata_outpost_arn
 
         # Snapshot configuration
-        final_snapshot = values.get("final_snapshot")
-        if final_snapshot is not None:
-            metadata["aws_final_snapshot"] = final_snapshot
+        metadata_final_snapshot = metadata_values.get("final_snapshot")
+        if metadata_final_snapshot is not None:
+            metadata["aws_final_snapshot"] = metadata_final_snapshot
 
         # Volume initialization rate
-        volume_initialization_rate = values.get("volume_initialization_rate")
-        if volume_initialization_rate:
-            metadata["aws_volume_initialization_rate"] = volume_initialization_rate
+        metadata_volume_initialization_rate = metadata_values.get(
+            "volume_initialization_rate"
+        )
+        if metadata_volume_initialization_rate:
+            metadata["aws_volume_initialization_rate"] = (
+                metadata_volume_initialization_rate
+            )
 
         # Volume ARN
-        arn = values.get("arn")
-        if arn:
-            metadata["aws_arn"] = arn
+        metadata_arn = metadata_values.get("arn")
+        if metadata_arn:
+            metadata["aws_arn"] = metadata_arn
 
         # Creation timestamp
-        create_time = values.get("create_time")
-        if create_time:
-            metadata["aws_create_time"] = create_time
+        metadata_create_time = metadata_values.get("create_time")
+        if metadata_create_time:
+            metadata["aws_create_time"] = metadata_create_time
 
         # Tags
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Attach all metadata to the node
         volume_node.with_metadata(metadata)
@@ -200,13 +216,13 @@ class AWSEBSVolumeMapper(SingleResourceMapper):
 
         logger.debug(f"Storage.BlockStorage node '{node_name}' created successfully.")
 
-        # Log mapped properties for debugging
+        # Log mapped properties for debugging - use metadata values for concrete display
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Mapped properties for '{node_name}':")
             logger.debug(f"  - Size: {size} GiB")
-            logger.debug(f"  - Availability Zone: {availability_zone}")
-            logger.debug(f"  - Volume Type: {volume_type}")
-            logger.debug(f"  - Encrypted: {encrypted}")
-            logger.debug(f"  - IOPS: {iops}")
-            logger.debug(f"  - Throughput: {throughput}")
-            logger.debug(f"  - Tags: {tags}")
+            logger.debug(f"  - Availability Zone: {metadata_availability_zone}")
+            logger.debug(f"  - Volume Type: {metadata_volume_type}")
+            logger.debug(f"  - Encrypted: {metadata_encrypted}")
+            logger.debug(f"  - IOPS: {metadata_iops}")
+            logger.debug(f"  - Throughput: {metadata_throughput}")
+            logger.debug(f"  - Tags: {metadata_tags}")

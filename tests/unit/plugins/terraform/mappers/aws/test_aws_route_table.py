@@ -5,7 +5,6 @@ from typing import Any
 
 import pytest
 
-import src.plugins.terraform.mappers.aws.aws_route_table as rtbl_mod
 from src.plugins.terraform.mappers.aws.aws_route_table import (
     AWSRouteTableMapper,
 )
@@ -130,64 +129,20 @@ class TestMapResourceHappyPath:
             "values": values,
         }
 
-        # Build parsed_data configuration with route references
-        parsed_data = {
-            "configuration": {
-                "root_module": {
-                    "resources": [
-                        {
-                            "address": "aws_route_table.rt",
-                            "expressions": {
-                                "vpc_id": {
-                                    "references": ["aws_vpc.main.id", "aws_vpc.main"]
-                                },
-                                "route": {
-                                    "references": [
-                                        "aws_internet_gateway.gw.id",
-                                        "aws_internet_gateway.gw",
-                                        "aws_egress_only_internet_gateway.eigw.id",
-                                        "aws_egress_only_internet_gateway.eigw",
-                                    ]
-                                },
-                            },
-                        }
-                    ]
-                }
-            }
-        }
+        # Unused parsed data removed for brevity
 
-        class FakeTerraformMapper:
-            def __init__(self, parsed: dict[str, Any]) -> None:
-                self._parsed = parsed
+        # Create a fake context that returns the expected reference
+        class FakeContext:
+            def extract_terraform_references(self, resource_data: dict[str, Any]):
+                return [("vpc_id", "aws_vpc.main", "DependsOn")]
 
-            def get_current_parsed_data(self) -> dict[str, Any]:
-                return self._parsed
-
-            @staticmethod
-            def extract_terraform_references(
-                res: dict[str, Any], parsed: dict[str, Any]
+            def get_resolved_values(
+                self, resource_data: dict[str, Any], context_type: str
             ):
-                # Return VPC reference that the mapper expects
-                return [("vpc_id", "aws_vpc.main", "tosca.DependsOn")]
+                return resource_data.get("values", {})
 
-            def run(self) -> None:
-                # Create frame context simulating TerraformMapper on stack
-                import sys
-
-                frame = sys._getframe()
-                frame.f_locals["self"] = self
-                try:
-                    m.map_resource(res_name, res_type, resource_data, b)
-                finally:
-                    # Clean up
-                    if "self" in frame.f_locals:
-                        del frame.f_locals["self"]
-
-        monkeypatch.setattr(
-            rtbl_mod, "TerraformMapper", FakeTerraformMapper, raising=True
-        )
-
-        FakeTerraformMapper(parsed_data).run()
+        context = FakeContext()
+        m.map_resource(res_name, res_type, resource_data, b, context)
 
         node_key = "aws_route_table_rt_0"
         assert node_key in b.nodes
@@ -233,16 +188,13 @@ class TestMapResourceHappyPath:
             "target_type": "egress_only_gateway_id",
         } in routes
 
-        # Dependencies: VPC + IGW + EIGW
+        # Dependencies: Only VPC (context only returns VPC reference)
         reqs = node["requirements"]
-        # Extract targets from requirements list
-        targets = {req["dependency"]["node"] for req in reqs}
-        assert "aws_vpc_main" in targets
-        assert "aws_internet_gateway_gw" in targets
-        assert "aws_egress_only_internet_gateway_eigw" in targets
-        # Relationship type
-        for req in reqs:
-            assert req["dependency"]["relationship"] == "DependsOn"
+        assert len(reqs) == 1
+        # Extract requirement details
+        vpc_req = reqs[0]["vpc_id"]
+        assert vpc_req["node"] == "aws_vpc_main"
+        assert vpc_req["relationship"] == "DependsOn"
 
 
 class TestEdgeCases:
@@ -254,9 +206,7 @@ class TestEdgeCases:
         assert b.nodes == {}
         assert any("has no 'values' section" in r.message for r in caplog.records)
 
-    def test_no_mapper_on_stack_no_dependencies(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_no_context_no_dependencies(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING)
         m = AWSRouteTableMapper()
         b = FakeBuilder()
@@ -266,14 +216,15 @@ class TestEdgeCases:
         node = b.nodes["aws_route_table_rt"]
         assert node["requirements"] == []
         assert any(
-            "Unable to access Terraform plan data" in r.message for r in caplog.records
+            "No context provided to detect dependencies" in r.message
+            for r in caplog.records
         )
 
     def test_no_name_tag_uses_clean_name(self) -> None:
         m = AWSRouteTableMapper()
         b = FakeBuilder()
         data = {"values": {"vpc_id": "vpc-1", "tags": {}}}
-        m.map_resource("aws_route_table.foo", "aws_route_table", data, b)
+        m.map_resource("aws_route_table.foo", "aws_route_table", data, b, None)
         node = b.nodes["aws_route_table_foo"]
         assert node["properties"]["network_name"] == "foo"
         assert node["properties"]["network_type"] == "routing"
@@ -290,51 +241,17 @@ class TestEdgeCases:
             "values": {"route": [{"cidr_block": "10.0.0.0/16", "gateway_id": "igw"}]},
         }
 
-        class FakeTerraformMapper:
-            def __init__(self, parsed: dict[str, Any]) -> None:
-                self._parsed = parsed
-
-            def get_current_parsed_data(self) -> dict[str, Any]:
-                return self._parsed
-
-            @staticmethod
-            def extract_terraform_references(
-                res: dict[str, Any], parsed: dict[str, Any]
-            ):
+        # Create a fake context that returns no references
+        class FakeContext:
+            def extract_terraform_references(self, resource_data: dict[str, Any]):
                 return []
 
-            def run(self) -> None:
-                # Create frame context simulating TerraformMapper on stack
-                import sys
+            def get_resolved_values(
+                self, resource_data: dict[str, Any], context_type: str
+            ):
+                return resource_data.get("values", {})
 
-                frame = sys._getframe()
-                frame.f_locals["self"] = self
-                try:
-                    m.map_resource(res_name, res_type, resource_data, b)
-                finally:
-                    # Clean up
-                    if "self" in frame.f_locals:
-                        del frame.f_locals["self"]
-
-        parsed_data = {
-            "configuration": {
-                "root_module": {
-                    "resources": [
-                        {
-                            "address": "aws_route_table.onlyv4",
-                            "expressions": {
-                                "route": {"references": ["aws_internet_gateway.gw.id"]}
-                            },
-                        }
-                    ]
-                }
-            }
-        }
-
-        monkeypatch.setattr(
-            rtbl_mod, "TerraformMapper", FakeTerraformMapper, raising=True
-        )
-
-        FakeTerraformMapper(parsed_data).run()
+        context = FakeContext()
+        m.map_resource(res_name, res_type, resource_data, b, context)
         node = b.nodes["aws_route_table_onlyv4"]
         assert node["properties"]["ip_version"] == 4

@@ -42,8 +42,13 @@ class AWSDBSubnetGroupMapper(SingleResourceMapper):
         """
         logger.info("Mapping DB Subnet Group resource: '%s'", resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
+
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -61,6 +66,12 @@ class AWSDBSubnetGroupMapper(SingleResourceMapper):
         else:
             clean_name = resource_name
 
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
         # Build comprehensive metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
 
@@ -77,21 +88,23 @@ class AWSDBSubnetGroupMapper(SingleResourceMapper):
         if provider_name:
             metadata["terraform_provider"] = provider_name
 
-        # Core DB Subnet Group properties
+        # Core DB Subnet Group properties - use metadata values for concrete resolution
         subnet_group_name = values.get("name")
-        if subnet_group_name:
-            metadata["aws_db_subnet_group_name"] = subnet_group_name
+        metadata_subnet_group_name = metadata_values.get("name")
+        if metadata_subnet_group_name:
+            metadata["aws_db_subnet_group_name"] = metadata_subnet_group_name
 
         # Description for the subnet group
-        description = values.get("description")
-        if description:
-            metadata["aws_db_subnet_group_description"] = description
+        metadata_description = metadata_values.get("description")
+        if metadata_description:
+            metadata["aws_db_subnet_group_description"] = metadata_description
 
         # Subnet IDs (required) - these define the placement constraints
         subnet_ids = values.get("subnet_ids", [])
-        if subnet_ids:
-            metadata["aws_subnet_ids"] = subnet_ids
-            metadata["aws_subnet_count"] = len(subnet_ids)
+        metadata_subnet_ids = metadata_values.get("subnet_ids", [])
+        if metadata_subnet_ids:
+            metadata["aws_subnet_ids"] = metadata_subnet_ids
+            metadata["aws_subnet_count"] = len(metadata_subnet_ids)
 
         # Extract subnet information to get availability zones (if context available)
         if context:
@@ -105,41 +118,43 @@ class AWSDBSubnetGroupMapper(SingleResourceMapper):
                 ]
 
         # Name prefix if used instead of explicit name
-        name_prefix = values.get("name_prefix")
-        if name_prefix:
-            metadata["aws_name_prefix"] = name_prefix
+        metadata_name_prefix = metadata_values.get("name_prefix")
+        if metadata_name_prefix:
+            metadata["aws_name_prefix"] = metadata_name_prefix
 
         # Region information
-        region = values.get("region")
-        if region:
-            metadata["aws_region"] = region
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
         # Tags for the subnet group
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Computed attributes from AWS
-        arn = values.get("arn")
-        if arn:
-            metadata["aws_arn"] = arn
+        metadata_arn = metadata_values.get("arn")
+        if metadata_arn:
+            metadata["aws_arn"] = metadata_arn
 
-        db_subnet_group_id = values.get("id")
-        if db_subnet_group_id:
-            metadata["aws_db_subnet_group_id"] = db_subnet_group_id
+        metadata_db_subnet_group_id = metadata_values.get("id")
+        if metadata_db_subnet_group_id:
+            metadata["aws_db_subnet_group_id"] = metadata_db_subnet_group_id
 
-        supported_network_types = values.get("supported_network_types", [])
-        if supported_network_types:
-            metadata["aws_supported_network_types"] = supported_network_types
+        metadata_supported_network_types = metadata_values.get(
+            "supported_network_types", []
+        )
+        if metadata_supported_network_types:
+            metadata["aws_supported_network_types"] = metadata_supported_network_types
 
-        vpc_id = values.get("vpc_id")
-        if vpc_id:
-            metadata["aws_vpc_id"] = vpc_id
+        metadata_vpc_id = metadata_values.get("vpc_id")
+        if metadata_vpc_id:
+            metadata["aws_vpc_id"] = metadata_vpc_id
 
         # Create the Placement policy
         policy_builder = builder.add_policy(policy_name, "Placement")
@@ -160,7 +175,7 @@ class AWSDBSubnetGroupMapper(SingleResourceMapper):
         # context available)
         if context:
             target_nodes = self._find_database_targets(
-                subnet_group_name, clean_name, context
+                metadata_subnet_group_name or subnet_group_name, clean_name, context
             )
             if target_nodes:
                 policy_builder.with_targets(*target_nodes)
@@ -185,7 +200,7 @@ class AWSDBSubnetGroupMapper(SingleResourceMapper):
             len(subnet_ids),
         )
 
-        # Debug: mapped properties
+        # Debug: mapped properties - use metadata values for concrete display
         logger.debug(
             "Mapped DB Subnet Group properties for '%s':\n"
             "  - Name: %s\n"
@@ -196,13 +211,13 @@ class AWSDBSubnetGroupMapper(SingleResourceMapper):
             "  - Tags: %s\n"
             "  - ARN: %s",
             policy_name,
-            subnet_group_name,
-            description,
-            subnet_ids,
-            region,
-            vpc_id,
-            tags,
-            arn,
+            metadata_subnet_group_name,
+            metadata_description,
+            metadata_subnet_ids,
+            metadata_region,
+            metadata_vpc_id,
+            metadata_tags,
+            metadata_arn,
         )
 
     def _extract_subnet_information(

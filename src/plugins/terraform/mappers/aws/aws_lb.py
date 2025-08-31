@@ -39,11 +39,16 @@ class AWSLoadBalancerMapper(SingleResourceMapper):
             resource_type: resource type ('aws_lb')
             resource_data: resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext for variable resolution
         """
         logger.info("Mapping AWS Load Balancer resource: '%s'", resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -70,9 +75,21 @@ class AWSLoadBalancerMapper(SingleResourceMapper):
         internal = values.get("internal", False)
         ip_address_type = values.get("ip_address_type", "ipv4")
 
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
         # Build metadata with Terraform and AWS information
         metadata = self._build_metadata(
-            resource_type, clean_name, resource_data, values, lb_type, internal
+            resource_type,
+            clean_name,
+            resource_data,
+            values,
+            metadata_values,
+            lb_type,
+            internal,
         )
 
         # Attach metadata to the node
@@ -142,6 +159,7 @@ class AWSLoadBalancerMapper(SingleResourceMapper):
         clean_name: str,
         resource_data: dict[str, Any],
         values: dict[str, Any],
+        metadata_values: dict[str, Any],
         lb_type: str,
         internal: bool,
     ) -> dict[str, Any]:
@@ -179,57 +197,63 @@ class AWSLoadBalancerMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # AWS specific properties
-        region = values.get("region")
-        if region:
-            metadata["aws_region"] = region
+        # AWS specific properties - use metadata values for concrete resolution
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
         # Access logs configuration
-        access_logs = values.get("access_logs", [])
-        if access_logs:
-            metadata["aws_access_logs"] = access_logs
+        metadata_access_logs = metadata_values.get("access_logs", [])
+        if metadata_access_logs:
+            metadata["aws_access_logs"] = metadata_access_logs
 
         # Connection logs (ALB only)
-        connection_logs = values.get("connection_logs", [])
-        if connection_logs:
-            metadata["aws_connection_logs"] = connection_logs
+        metadata_connection_logs = metadata_values.get("connection_logs", [])
+        if metadata_connection_logs:
+            metadata["aws_connection_logs"] = metadata_connection_logs
 
         # Tags
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Advanced settings
-        deletion_protection = values.get("enable_deletion_protection", False)
-        if deletion_protection:
-            metadata["aws_deletion_protection_enabled"] = deletion_protection
+        metadata_deletion_protection = metadata_values.get(
+            "enable_deletion_protection", False
+        )
+        if metadata_deletion_protection:
+            metadata["aws_deletion_protection_enabled"] = metadata_deletion_protection
 
         # ALB specific features
         if lb_type == "application":
-            http2_enabled = values.get("enable_http2", True)
-            metadata["aws_http2_enabled"] = http2_enabled
+            metadata_http2_enabled = metadata_values.get("enable_http2", True)
+            metadata["aws_http2_enabled"] = metadata_http2_enabled
 
-            drop_invalid_headers = values.get("drop_invalid_header_fields", False)
-            if drop_invalid_headers:
-                metadata["aws_drop_invalid_header_fields"] = drop_invalid_headers
+            metadata_drop_invalid_headers = metadata_values.get(
+                "drop_invalid_header_fields", False
+            )
+            if metadata_drop_invalid_headers:
+                metadata["aws_drop_invalid_header_fields"] = (
+                    metadata_drop_invalid_headers
+                )
 
-            idle_timeout = values.get("idle_timeout", 60)
-            if idle_timeout != 60:
-                metadata["aws_idle_timeout"] = idle_timeout
+            metadata_idle_timeout = metadata_values.get("idle_timeout", 60)
+            if metadata_idle_timeout != 60:
+                metadata["aws_idle_timeout"] = metadata_idle_timeout
 
         # Cross-zone load balancing
-        cross_zone = values.get("enable_cross_zone_load_balancing")
-        if cross_zone is not None:
-            metadata["aws_cross_zone_load_balancing"] = cross_zone
+        metadata_cross_zone = metadata_values.get("enable_cross_zone_load_balancing")
+        if metadata_cross_zone is not None:
+            metadata["aws_cross_zone_load_balancing"] = metadata_cross_zone
 
         # IP address type
-        ip_address_type = values.get("ip_address_type", "ipv4")
-        if ip_address_type != "ipv4":
-            metadata["aws_ip_address_type"] = ip_address_type
+        metadata_ip_address_type = metadata_values.get("ip_address_type", "ipv4")
+        if metadata_ip_address_type != "ipv4":
+            metadata["aws_ip_address_type"] = metadata_ip_address_type
 
         return metadata
 
@@ -298,27 +322,19 @@ class AWSLoadBalancerMapper(SingleResourceMapper):
     ) -> None:
         """Log the mapped properties for debugging."""
         if logger.isEnabledFor(logging.DEBUG):
+            # Extract from metadata for concrete values
             lb_name = values.get("name", "")
             lb_type = values.get("load_balancer_type", "application")
             internal = values.get("internal", False)
-            region = values.get("region", "")
-            tags = values.get("tags", {})
 
+            logger.debug("Mapped properties for '%s':", node_name)
+            logger.debug("  - Name: %s", lb_name)
+            logger.debug("  - Type: %s", lb_type)
+            logger.debug("  - Internal: %s", internal)
+            logger.debug("  - Region: %s", metadata.get("aws_region", ""))
+            logger.debug("  - Tags: %s", metadata.get("aws_tags", {}))
+            logger.debug("  - Access Control: %s", "Private" if internal else "Public")
             logger.debug(
-                "Mapped properties for '%s':\n"
-                "  - Name: %s\n"
-                "  - Type: %s\n"
-                "  - Internal: %s\n"
-                "  - Region: %s\n"
-                "  - Tags: %s\n"
-                "  - Access Control: %s\n"
                 "  - Deletion Protection: %s",
-                node_name,
-                lb_name,
-                lb_type,
-                internal,
-                region,
-                tags,
-                "Private" if internal else "Public",
                 metadata.get("aws_deletion_protection_enabled", False),
             )

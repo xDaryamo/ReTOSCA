@@ -40,8 +40,12 @@ class AWSRouteTableMapper(SingleResourceMapper):
         """
         logger.info("Mapping Route Table resource: '%s'", resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -62,7 +66,49 @@ class AWSRouteTableMapper(SingleResourceMapper):
         # Create the Route Table node as a Network node
         route_table_node = builder.add_node(name=node_name, node_type="Network")
 
-        # Build metadata with Terraform and AWS information
+        # Extract AWS Route Table properties and map them to TOSCA Network properties
+
+        # Routes configuration
+        routes = values.get("route", [])
+
+        # Tags for the route table
+        tags = values.get("tags", {})
+
+        # Map standard TOSCA Network properties
+
+        # Set Network properties (only standard TOSCA Simple Profile properties)
+        if tags and "Name" in tags:
+            route_table_node.with_property("network_name", tags["Name"])
+        else:
+            route_table_node.with_property("network_name", clean_name)
+
+        # Set network type to indicate this is a routing network
+        route_table_node.with_property("network_type", "routing")
+
+        # Process routes to determine IP version
+        processed_routes = []
+        if routes:
+            processed_routes = self._process_routes(routes)
+
+        # Set IP version based on routes (default to 4, set to 6 if IPv6 routes exist)
+        has_ipv6_routes = any(
+            route.get("destination_type") == "ipv6_cidr" for route in processed_routes
+        )
+        route_table_node.with_property("ip_version", 6 if has_ipv6_routes else 4)
+
+        # DHCP is enabled by default in AWS VPCs/Route Tables
+        route_table_node.with_property("dhcp_enabled", True)
+
+        # Add the standard 'link' capability for Network nodes
+        route_table_node.add_capability("link").and_node()
+
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
+        # Build metadata containing Terraform and AWS information
         metadata: dict[str, Any] = {}
 
         # Original resource information
@@ -76,61 +122,59 @@ class AWSRouteTableMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # VPC ID (required for route tables)
-        vpc_id = values.get("vpc_id")
-        if vpc_id:
-            metadata["aws_vpc_id"] = vpc_id
+        # AWS Route Table specific information - use metadata_values for concrete values
+        metadata_vpc_id = metadata_values.get("vpc_id")
+        if metadata_vpc_id:
+            metadata["aws_vpc_id"] = metadata_vpc_id
 
-        # Process routes for properties
-        routes = values.get("route", [])
-        processed_routes = []
-        if routes:
-            processed_routes = self._process_routes(routes)
-            metadata["aws_route_count"] = len(routes)
+        # Process routes for metadata
+        metadata_routes = metadata_values.get("route", [])
+        if metadata_routes:
+            metadata_processed_routes = self._process_routes(metadata_routes)
+            metadata["aws_routes"] = metadata_processed_routes
+            metadata["aws_route_count"] = len(metadata_routes)
 
         # Propagating VGWs (Virtual Gateways)
-        propagating_vgws = values.get("propagating_vgws", [])
-        if propagating_vgws:
-            metadata["aws_propagating_vgws"] = propagating_vgws
+        metadata_propagating_vgws = metadata_values.get("propagating_vgws", [])
+        if metadata_propagating_vgws:
+            metadata["aws_propagating_vgws"] = metadata_propagating_vgws
 
-        # Tags for the route table
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        # AWS Route Table tags - use concrete metadata values
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
             # Use Name tag if available
-            if "Name" in tags:
-                metadata["aws_name"] = tags["Name"]
+            if "Name" in metadata_tags:
+                metadata["aws_name"] = metadata_tags["Name"]
+
+        # Extract additional AWS info for extra metadata
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
-        # Additional AWS properties that might be available
-        region = values.get("region")
-        if region:
-            metadata["aws_region"] = region
+        # Region information
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
-        # Set Network properties (only standard TOSCA Simple Profile properties)
-        if tags and "Name" in tags:
-            route_table_node.with_property("network_name", tags["Name"])
-        else:
-            route_table_node.with_property("network_name", clean_name)
+        # Owner ID (populated after creation)
+        metadata_owner_id = metadata_values.get("owner_id")
+        if metadata_owner_id:
+            metadata["aws_owner_id"] = metadata_owner_id
 
-        # Set network type to indicate this is a routing network
-        route_table_node.with_property("network_type", "routing")
+        # Route Table ID (populated after creation)
+        metadata_route_table_id = metadata_values.get("id")
+        if metadata_route_table_id:
+            metadata["aws_route_table_id"] = metadata_route_table_id
 
-        # Set IP version based on routes (default to 4, set to 6 if IPv6 routes exist)
-        has_ipv6_routes = any(
-            route.get("destination_type") == "ipv6_cidr" for route in processed_routes
-        )
-        route_table_node.with_property("ip_version", 6 if has_ipv6_routes else 4)
+        # Associations (populated after creation)
+        metadata_associations = metadata_values.get("associations", [])
+        if metadata_associations:
+            metadata["aws_associations"] = metadata_associations
 
-        # Add routes to metadata (not as property - not in TOSCA Simple Profile)
-        if processed_routes:
-            metadata["aws_routes"] = processed_routes
-
-        # Attach collected metadata to the node
+        # Attach all metadata to the node
         route_table_node.with_metadata(metadata)
 
         # Add the standard 'link' capability for Network nodes
@@ -183,21 +227,16 @@ class AWSRouteTableMapper(SingleResourceMapper):
                 resource_name,
             )
 
-        logger.debug("Route Table node '%s' created successfully.", node_name)
+        logger.debug(f"Route Table Network node '{node_name}' created successfully.")
 
-        # Debug: mapped properties
-        logger.debug(
-            "Mapped properties for '%s':\n"
-            "  - VPC ID: %s\n"
-            "  - Routes: %d\n"
-            "  - Propagating VGWs: %s\n"
-            "  - Tags: %s",
-            node_name,
-            vpc_id,
-            len(routes),
-            propagating_vgws,
-            tags,
-        )
+        # Log mapped properties for debugging
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Mapped properties for '{node_name}':")
+            logger.debug(f"  - VPC ID: {metadata_vpc_id}")
+            logger.debug(f"  - Routes: {len(metadata_routes)}")
+            logger.debug(f"  - Propagating VGWs: {metadata_propagating_vgws}")
+            logger.debug(f"  - Tags: {metadata_tags}")
+            logger.debug(f"  - Region: {metadata_region}")
 
     def _process_routes(self, routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Process and clean route information for metadata."""

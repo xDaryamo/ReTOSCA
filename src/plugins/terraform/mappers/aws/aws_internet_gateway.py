@@ -45,6 +45,7 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
                           'aws_egress_only_internet_gateway')
             resource_data: resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext for variable resolution
         """
         # Determine gateway type for logging
         is_egress_only = resource_type == "aws_egress_only_internet_gateway"
@@ -54,8 +55,12 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
 
         logger.info("Mapping %s resource: '%s'", gateway_type, resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -75,6 +80,12 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
 
         # Create the Internet Gateway node as a Network node
         igw_node = builder.add_node(name=node_name, node_type="Network")
+
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
 
         # Build metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
@@ -107,27 +118,28 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
             metadata["aws_provider"] = provider_name
 
         # VPC ID (stored in metadata, used later for requirements)
-        vpc_id = values.get("vpc_id")
-        if vpc_id:
-            metadata["aws_vpc_id"] = vpc_id
+        # Use metadata values for concrete resolution
+        metadata_vpc_id = metadata_values.get("vpc_id")
+        if metadata_vpc_id:
+            metadata["aws_vpc_id"] = metadata_vpc_id
 
-        # Tags for the Internet Gateway
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        # Tags for the Internet Gateway - use metadata values for concrete resolution
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
             # Use Name tag if available
-            if "Name" in tags:
-                metadata["aws_name"] = tags["Name"]
+            if "Name" in metadata_tags:
+                metadata["aws_name"] = metadata_tags["Name"]
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Additional AWS properties that might be available
-        region = values.get("region")
-        if region:
-            metadata["aws_region"] = region
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
         # Attach collected metadata to the node
         igw_node.with_metadata(metadata)
@@ -145,8 +157,10 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
             base_name = "IGW"
 
         # Use Name tag if available, otherwise use a descriptive name
-        if tags and "Name" in tags:
-            igw_node.with_property("network_name", f"{base_name}-{tags['Name']}")
+        if metadata_tags and "Name" in metadata_tags:
+            igw_node.with_property(
+                "network_name", f"{base_name}-{metadata_tags['Name']}"
+            )
         else:
             igw_node.with_property("network_name", f"{base_name}-{clean_name}")
 
@@ -202,20 +216,20 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
 
         logger.debug("%s node '%s' created successfully.", gateway_type, node_name)
 
-        # Debug: mapped properties
-        logger.debug(
-            "Mapped properties for '%s':\n"
-            "  - Gateway Type: %s\n"
-            "  - VPC ID: %s\n"
-            "  - Region: %s\n"
-            "  - Tags: %s\n"
-            "  - Traffic Direction: %s\n"
-            "  - IP Version Support: %s",
-            node_name,
-            metadata.get("aws_gateway_type", "unknown"),
-            vpc_id,
-            region,
-            tags,
-            metadata.get("aws_traffic_direction", "unknown"),
-            metadata.get("aws_ip_version_support", "unknown"),
-        )
+        # Debug: mapped properties - use metadata values for concrete display
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Mapped properties for '%s':", node_name)
+            logger.debug(
+                "  - Gateway Type: %s", metadata.get("aws_gateway_type", "unknown")
+            )
+            logger.debug("  - VPC ID: %s", metadata_vpc_id)
+            logger.debug("  - Region: %s", metadata_region)
+            logger.debug("  - Tags: %s", metadata_tags)
+            logger.debug(
+                "  - Traffic Direction: %s",
+                metadata.get("aws_traffic_direction", "unknown"),
+            )
+            logger.debug(
+                "  - IP Version Support: %s",
+                metadata.get("aws_ip_version_support", "unknown"),
+            )

@@ -331,11 +331,23 @@ class AWSInstanceMapper(SingleResourceMapper):
         builder: "ServiceTemplateBuilder",
         context: "TerraformMappingContext | None" = None,
     ) -> None:
-        """Translate an aws_instance into a TOSCA Compute node."""
+        """Translate an aws_instance into a TOSCA Compute node.
+
+        Args:
+            resource_name: resource name (e.g. 'aws_instance.web')
+            resource_type: resource type (always 'aws_instance')
+            resource_data: resource data from the Terraform plan
+            builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext for variable resolution
+        """
         logger.info(f"Mapping EC2 Instance resource: '{resource_name}'")
 
-        # The actual values are in the 'values' key of the plan JSON
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -359,13 +371,19 @@ class AWSInstanceMapper(SingleResourceMapper):
         # Extract relevant AWS instance properties
         ami = values.get("ami")
         instance_type = values.get("instance_type")
-        region = values.get("region")
         cpu_options = values.get("cpu_options", [])
 
         # Infer compute capabilities from the AWS instance type and cpu_options
-        self._add_compute_capabilities(
-            compute_node, instance_type, ami, cpu_options, context
-        )
+        if instance_type:
+            self._add_compute_capabilities(
+                compute_node, instance_type, ami, cpu_options, context
+            )
+
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
 
         # Build comprehensive metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
@@ -380,62 +398,72 @@ class AWSInstanceMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # AWS information extracted from values
-        if region:
-            metadata["aws_region"] = region
-        if instance_type:
-            metadata["aws_instance_type"] = instance_type
-        if ami:
-            metadata["aws_ami"] = ami
+        # AWS information extracted from metadata values for concrete resolution
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
-        # Add all collected metadata to the node
-        compute_node.with_metadata(metadata)
+        metadata_instance_type = metadata_values.get("instance_type")
+        if metadata_instance_type:
+            metadata["aws_instance_type"] = metadata_instance_type
 
-        # Additional AWS info for extra metadata
-        user_data = values.get("user_data")
-        monitoring = values.get("monitoring")
-        get_password_data = values.get("get_password_data", False)
-        source_dest_check = values.get("source_dest_check", True)
-        hibernation = values.get("hibernation")
-        tags = values.get("tags", {})
+        metadata_ami = metadata_values.get("ami")
+        if metadata_ami:
+            metadata["aws_ami"] = metadata_ami
 
-        if user_data:
-            metadata["aws_user_data"] = user_data
-        if monitoring is not None:
-            metadata["aws_monitoring"] = monitoring
-        if get_password_data:
-            metadata["aws_get_password_data"] = get_password_data
-        if not source_dest_check:
-            metadata["aws_source_dest_check"] = source_dest_check
-        if hibernation is not None:
-            metadata["aws_hibernation"] = hibernation
+        # Additional AWS info for extra metadata - use metadata values for
+        # concrete resolution
+        metadata_user_data = metadata_values.get("user_data")
+        if metadata_user_data:
+            metadata["aws_user_data"] = metadata_user_data
+
+        metadata_monitoring = metadata_values.get("monitoring")
+        if metadata_monitoring is not None:
+            metadata["aws_monitoring"] = metadata_monitoring
+
+        metadata_get_password_data = metadata_values.get("get_password_data", False)
+        if metadata_get_password_data:
+            metadata["aws_get_password_data"] = metadata_get_password_data
+
+        metadata_source_dest_check = metadata_values.get("source_dest_check", True)
+        if not metadata_source_dest_check:
+            metadata["aws_source_dest_check"] = metadata_source_dest_check
+
+        metadata_hibernation = metadata_values.get("hibernation")
+        if metadata_hibernation is not None:
+            metadata["aws_hibernation"] = metadata_hibernation
 
         # Credit specification for burstable instances (t2, t3, t4g, etc.)
-        credit_specification = values.get("credit_specification", [])
-        if credit_specification:
-            metadata["aws_credit_specification"] = credit_specification
+        metadata_credit_specification = metadata_values.get("credit_specification", [])
+        if metadata_credit_specification:
+            metadata["aws_credit_specification"] = metadata_credit_specification
 
         # Launch template if specified
-        launch_template = values.get("launch_template", [])
-        if launch_template:
-            metadata["aws_launch_template"] = launch_template
+        metadata_launch_template = metadata_values.get("launch_template", [])
+        if metadata_launch_template:
+            metadata["aws_launch_template"] = metadata_launch_template
 
         # Volume tags
-        volume_tags = values.get("volume_tags")
-        if volume_tags:
-            metadata["aws_volume_tags"] = volume_tags
+        metadata_volume_tags = metadata_values.get("volume_tags")
+        if metadata_volume_tags:
+            metadata["aws_volume_tags"] = metadata_volume_tags
 
         # Timeouts
-        timeouts = values.get("timeouts")
-        if timeouts:
-            metadata["terraform_timeouts"] = timeouts
+        metadata_timeouts = metadata_values.get("timeouts")
+        if metadata_timeouts:
+            metadata["terraform_timeouts"] = metadata_timeouts
+
+        # Tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
         # tags_all (all tags including provider-level tags)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
-        # Update the node metadata with the additional information
+        # Add all collected metadata to the node
         compute_node.with_metadata(metadata)
 
         # Add dependencies using injected context
@@ -487,18 +515,18 @@ class AWSInstanceMapper(SingleResourceMapper):
 
         logger.debug("EC2 Compute node '%s' created successfully.", node_name)
 
-        # Debug: mapped properties
+        # Debug: mapped properties - use metadata values for concrete display
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Mapped properties for '%s':", node_name)
-            logger.debug("  - AMI: %s", ami)
-            logger.debug("  - Instance Type: %s", instance_type)
-            logger.debug("  - Region: %s", region)
-            logger.debug("  - Tags: %s", tags)
-            if user_data:
-                if len(str(user_data)) > 100:
-                    logger.debug("  - User Data: %s...", str(user_data)[:100])
+            logger.debug("  - AMI: %s", metadata_ami)
+            logger.debug("  - Instance Type: %s", metadata_instance_type)
+            logger.debug("  - Region: %s", metadata_region)
+            logger.debug("  - Tags: %s", metadata_tags)
+            if metadata_user_data:
+                if len(str(metadata_user_data)) > 100:
+                    logger.debug("  - User Data: %s...", str(metadata_user_data)[:100])
                 else:
-                    logger.debug("  - User Data: %s", user_data)
+                    logger.debug("  - User Data: %s", metadata_user_data)
 
     def _add_compute_capabilities(
         self,

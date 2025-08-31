@@ -16,6 +16,10 @@ python = "^3.11"
 pydantic = "^2.11.7"
 python-hcl2 = "^7.2.1"
 ruamel-yaml = "^0.18.14"
+localstack = "^4.7.0"
+localstack-client = "^2.10"
+awscli-local = "^0.22.2"
+terraform-local = "^0.24.1"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.2.0"

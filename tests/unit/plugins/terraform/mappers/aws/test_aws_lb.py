@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mapper import TerraformMapper
+from src.plugins.terraform.context import TerraformMappingContext
 from src.plugins.terraform.mappers.aws.aws_lb import AWSLoadBalancerMapper
 
 
@@ -82,18 +82,17 @@ class FakeBuilder:
         return self.nodes[name]
 
 
-class Harness(TerraformMapper):
-    def invoke(
-        self,
-        mapper: AWSLoadBalancerMapper,
-        resource_name: str,
-        resource_type: str,
-        resource_data: dict[str, Any],
-        builder: FakeBuilder,
-        parsed_data: dict[str, Any],
-    ) -> None:
-        self._current_parsed_data = parsed_data
-        mapper.map_resource(resource_name, resource_type, resource_data, builder)
+def invoke_mapper_with_context(
+    mapper: AWSLoadBalancerMapper,
+    resource_name: str,
+    resource_type: str,
+    resource_data: dict[str, Any],
+    builder: FakeBuilder,
+    parsed_data: dict[str, Any],
+) -> None:
+    """Helper to invoke mapper with context."""
+    context = TerraformMappingContext(parsed_data=parsed_data, variable_context=None)
+    mapper.map_resource(resource_name, resource_type, resource_data, builder, context)
 
 
 class TestCanMap:
@@ -111,7 +110,6 @@ class TestGuards:
         caplog.set_level("WARNING")
         m = AWSLoadBalancerMapper()
         b = FakeBuilder()
-        h = Harness()
 
         rd = {"address": "aws_lb.web"}  # no 'values'
         parsed = {
@@ -119,7 +117,7 @@ class TestGuards:
             "planned_values": {"root_module": {"resources": []}},
         }
 
-        h.invoke(m, "aws_lb.web", "aws_lb", rd, b, parsed)
+        invoke_mapper_with_context(m, "aws_lb.web", "aws_lb", rd, b, parsed)
 
         assert b.nodes == {}
         assert any("has no 'values' section" in r.message for r in caplog.records)
@@ -155,7 +153,6 @@ class TestALBExternalWithDependencies:
     def test_maps_alb_public_and_adds_dependencies(self) -> None:
         m = AWSLoadBalancerMapper()
         b = FakeBuilder()
-        h = Harness()
 
         address = "aws_lb.web"
         parsed = self._parsed_with_refs(address)
@@ -176,7 +173,7 @@ class TestALBExternalWithDependencies:
             "values": values,
         }
 
-        h.invoke(m, address, "aws_lb", rd, b, parsed)
+        invoke_mapper_with_context(m, address, "aws_lb", rd, b, parsed)
 
         # node presence & type
         node = b.get_node("aws_lb_web")
@@ -219,7 +216,6 @@ class TestNLBInternalProperties:
     def test_maps_nlb_private_and_sets_expected_props(self) -> None:
         m = AWSLoadBalancerMapper()
         b = FakeBuilder()
-        h = Harness()
 
         address = "aws_lb.nlb1"
         parsed = {
@@ -238,7 +234,7 @@ class TestNLBInternalProperties:
         }
         rd = {"address": address, "values": values}
 
-        h.invoke(m, address, "aws_lb", rd, b, parsed)
+        invoke_mapper_with_context(m, address, "aws_lb", rd, b, parsed)
 
         node = b.get_node("aws_lb_nlb1")
 

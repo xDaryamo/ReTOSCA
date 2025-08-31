@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-import src.plugins.terraform.mappers.aws.aws_internet_gateway as igw_mod
 from src.plugins.terraform.mappers.aws.aws_internet_gateway import (
     AWSInternetGatewayMapper,
 )
@@ -108,15 +107,14 @@ class TestCanMap:
 
 
 class TestMapResource:
-    def test_map_happy_path_with_dependency(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_map_happy_path_with_dependency(self) -> None:
         m = AWSInternetGatewayMapper()
         b = FakeBuilder()
         res_name = "aws_internet_gateway.gw[0]"
         res_type = "aws_internet_gateway"
         data = {
             "provider_name": "registry.terraform.io/hashicorp/aws",
+            "address": res_name,
             "values": {
                 "vpc_id": "vpc-123",
                 "region": "eu-west-1",
@@ -124,27 +122,18 @@ class TestMapResource:
             },
         }
 
-        class FakeTerraformMapper:
-            def __init__(self, parsed: dict[str, Any]) -> None:
-                self._parsed = parsed
+        # Create mock context that returns a dependency
+        class FakeContext:
+            def extract_terraform_references(self, resource_data: dict[str, Any]):
+                return [("vpc_id", "aws_vpc.main", "DependsOn")]
 
-            def get_current_parsed_data(self) -> dict[str, Any]:
-                return self._parsed
-
-            @staticmethod
-            def extract_terraform_references(
-                res: dict[str, Any], parsed: dict[str, Any]
+            def get_resolved_values(
+                self, resource_data: dict[str, Any], context_type: str
             ):
-                return [("vpc_id", "aws_vpc.main", "tosca.DependsOn")]
+                return resource_data.get("values", {})
 
-            def run(self) -> None:
-                m.map_resource(res_name, res_type, data, b)
-
-        monkeypatch.setattr(
-            igw_mod, "TerraformMapper", FakeTerraformMapper, raising=True
-        )
-
-        FakeTerraformMapper({"ok": True}).run()
+        context = FakeContext()
+        m.map_resource(res_name, res_type, data, b, context)
 
         node_name = "aws_internet_gateway_gw_0"
         assert node_name in b.nodes
@@ -177,7 +166,7 @@ class TestMapResource:
         # Dependency requirement to VPC
         reqs = node["requirements"]
         assert len(reqs) == 1
-        dep = reqs[0]["dependency"]
+        dep = reqs[0]["vpc_id"]
         assert dep["node"] == "aws_vpc_main"
         assert dep["relationship"] == "DependsOn"
 
@@ -191,7 +180,7 @@ class TestMapResource:
         assert b.nodes == {}
         assert any("has no 'values' section" in r.message for r in caplog.records)
 
-    def test_map_no_mapper_on_stack_no_dependency(
+    def test_map_no_context_no_dependency(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level(logging.WARNING)
@@ -203,7 +192,8 @@ class TestMapResource:
         node = b.nodes["aws_internet_gateway_gw"]
         assert node["requirements"] == []
         assert any(
-            "Unable to access Terraform plan data" in r.message for r in caplog.records
+            "No context provided to detect dependencies" in r.message
+            for r in caplog.records
         )
 
     def test_name_tag_absent_uses_default_network_name(self) -> None:
@@ -223,9 +213,7 @@ class TestMapResource:
         node = b.nodes["aws_internet_gateway_igw1"]
         assert node["metadata"]["original_resource_name"] == "igw1"
 
-    def test_map_egress_only_igw_with_dependency(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_map_egress_only_igw_with_dependency(self) -> None:
         """Test mapping of aws_egress_only_internet_gateway with specific metadata."""
         m = AWSInternetGatewayMapper()
         b = FakeBuilder()
@@ -233,6 +221,7 @@ class TestMapResource:
         res_type = "aws_egress_only_internet_gateway"
         data = {
             "provider_name": "registry.terraform.io/hashicorp/aws",
+            "address": res_name,
             "values": {
                 "vpc_id": "vpc-456",
                 "region": "us-east-1",
@@ -240,27 +229,18 @@ class TestMapResource:
             },
         }
 
-        class FakeTerraformMapper:
-            def __init__(self, parsed: dict[str, Any]) -> None:
-                self._parsed = parsed
+        # Create mock context that returns a dependency
+        class FakeContext:
+            def extract_terraform_references(self, resource_data: dict[str, Any]):
+                return [("vpc_id", "aws_vpc.main", "DependsOn")]
 
-            def get_current_parsed_data(self) -> dict[str, Any]:
-                return self._parsed
-
-            @staticmethod
-            def extract_terraform_references(
-                res: dict[str, Any], parsed: dict[str, Any]
+            def get_resolved_values(
+                self, resource_data: dict[str, Any], context_type: str
             ):
-                return [("vpc_id", "aws_vpc.main", "tosca.DependsOn")]
+                return resource_data.get("values", {})
 
-            def run(self) -> None:
-                m.map_resource(res_name, res_type, data, b)
-
-        monkeypatch.setattr(
-            igw_mod, "TerraformMapper", FakeTerraformMapper, raising=True
-        )
-
-        FakeTerraformMapper({"ok": True}).run()
+        context = FakeContext()
+        m.map_resource(res_name, res_type, data, b, context)
 
         node_name = "aws_egress_only_internet_gateway_egress"
         assert node_name in b.nodes
@@ -294,7 +274,7 @@ class TestMapResource:
         # Dependency requirement to VPC
         reqs = node["requirements"]
         assert len(reqs) == 1
-        dep = reqs[0]["dependency"]
+        dep = reqs[0]["vpc_id"]
         assert dep["node"] == "aws_vpc_main"
         assert dep["relationship"] == "DependsOn"
 

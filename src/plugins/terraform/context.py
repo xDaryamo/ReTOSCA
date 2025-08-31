@@ -164,6 +164,51 @@ class TerraformMappingContext:
 
         return None
 
+    def get_resolved_values(
+        self, resource_data: dict[str, Any], context: str = "property"
+    ) -> dict[str, Any]:
+        """
+        Get resolved values for a resource, handling variable references appropriately.
+
+        Args:
+            resource_data: Single resource data (from state or planned_values)
+            context: Context for resolution ("property", "metadata", "attribute")
+                - "property": May return $get_input for variable references
+                - "metadata": Always returns concrete values
+                - "attribute": May return $get_input for variable references
+
+        Returns:
+            Dictionary of resolved values where variable references are handled
+            according to the context
+        """
+        original_values = resource_data.get("values", {})
+        if not original_values:
+            return {}
+
+        if not self.variable_context:
+            # No variable context available, return original values
+            return original_values
+
+        resource_address = resource_data.get("address")
+        if not resource_address:
+            # No resource address, can't resolve variables
+            return original_values
+
+        resolved_values = {}
+
+        for prop_name, original_value in original_values.items():
+            resolved_value = self.variable_context.resolve_property(
+                resource_address, prop_name, context
+            )
+
+            # If resolution didn't change the value, use the original
+            if resolved_value is None:
+                resolved_values[prop_name] = original_value
+            else:
+                resolved_values[prop_name] = resolved_value
+
+        return resolved_values
+
     def _determine_terraform_relationship_type(
         self, property_name: str, target_resource: str
     ) -> str:

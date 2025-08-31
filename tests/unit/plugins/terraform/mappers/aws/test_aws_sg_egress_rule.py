@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mapper import TerraformMapper
+from src.plugins.terraform.context import TerraformMappingContext
 from src.plugins.terraform.mappers.aws.aws_vpc_security_group_egress_rule import (
     AWSVPCSecurityGroupEgressRuleMapper,
 )
@@ -36,20 +36,6 @@ class FakeBuilder:
         return self.nodes[name]
 
 
-class Harness(TerraformMapper):
-    def invoke(
-        self,
-        mapper: AWSVPCSecurityGroupEgressRuleMapper,
-        resource_name: str,
-        resource_type: str,
-        resource_data: dict[str, Any],
-        builder: FakeBuilder,
-        parsed_data: dict[str, Any],
-    ) -> None:
-        self._current_parsed_data = parsed_data
-        mapper.map_resource(resource_name, resource_type, resource_data, builder)
-
-
 class TestCanMap:
     def test_true_for_egress_rule(self) -> None:
         m = AWSVPCSecurityGroupEgressRuleMapper()
@@ -68,7 +54,7 @@ class TestGuards:
         m = AWSVPCSecurityGroupEgressRuleMapper()
         b = FakeBuilder()
 
-        # Call directly (no TerraformMapper on the stack)
+        # Call directly (no context provided)
         rd = {
             "address": "aws_vpc_security_group_egress_rule.rule1",
             "values": {
@@ -82,11 +68,10 @@ class TestGuards:
             "aws_vpc_security_group_egress_rule",
             rd,
             b,
+            None,
         )
 
-        assert any(
-            "Could not access Terraform plan data" in r.message for r in caplog.records
-        )
+        assert any("No context provided" in r.message for r in caplog.records)
         assert b.nodes == {}
 
     def test_missing_values_logs_and_skips(
@@ -95,7 +80,6 @@ class TestGuards:
         caplog.set_level("WARNING")
         m = AWSVPCSecurityGroupEgressRuleMapper()
         b = FakeBuilder()
-        h = Harness()
 
         parsed = {
             "configuration": {"root_module": {"resources": []}},
@@ -106,13 +90,13 @@ class TestGuards:
             # no 'values'
         }
 
-        h.invoke(
-            m,
+        context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
+        m.map_resource(
             "aws_vpc_security_group_egress_rule.rule1",
             "aws_vpc_security_group_egress_rule",
             rd,
             b,
-            parsed,
+            context,
         )
 
         # inner extractor logs the specific message
@@ -129,7 +113,6 @@ class TestGuards:
         caplog.set_level("WARNING")
         m = AWSVPCSecurityGroupEgressRuleMapper()
         b = FakeBuilder()
-        h = Harness()
 
         parsed = {
             "configuration": {"root_module": {"resources": []}},
@@ -140,17 +123,17 @@ class TestGuards:
             "values": {"from_port": 0, "to_port": 0, "ip_protocol": "-1"},
         }
 
-        h.invoke(
-            m,
+        context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
+        m.map_resource(
             "aws_vpc_security_group_egress_rule.rule1",
             "aws_vpc_security_group_egress_rule",
             rd,
             b,
-            parsed,
+            context,
         )
 
         assert any(
-            "Could not find configuration for resource" in r.message
+            "Could not find security group reference" in r.message
             for r in caplog.records
         )
         assert any(
@@ -173,8 +156,8 @@ class TestHappyPath:
                                 "security_group_id": {
                                     "references": ["aws_security_group.allow_tls.id"]
                                 },
+                                # include both ipv4 and ipv6 refs to exercise both paths
                                 "cidr_ipv4": {"references": ["var.world_cidr_v4"]},
-                                # include ipv6 ref to exercise both paths
                                 "cidr_ipv6": {"references": ["var.world_cidr_v6"]},
                             },
                         }
@@ -186,7 +169,6 @@ class TestHappyPath:
     def test_adds_egress_rule_to_existing_sg(self) -> None:
         m = AWSVPCSecurityGroupEgressRuleMapper()
         b = FakeBuilder()
-        h = Harness()
 
         address = "aws_vpc_security_group_egress_rule.rule1"
         parsed = self._parsed_with_refs(address)
@@ -207,13 +189,13 @@ class TestHappyPath:
         sg_node_name = "aws_security_group_allow_tls"
         b.add_node(sg_node_name, "Root").with_metadata({})
 
-        h.invoke(
-            m,
+        context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
+        m.map_resource(
             address,
             "aws_vpc_security_group_egress_rule",
             rd,
             b,
-            parsed,
+            context,
         )
 
         node = b.get_node(sg_node_name)
@@ -239,7 +221,6 @@ class TestHappyPath:
         caplog.set_level("WARNING")
         m = AWSVPCSecurityGroupEgressRuleMapper()
         b = FakeBuilder()
-        h = Harness()
 
         address = "aws_vpc_security_group_egress_rule.rule1"
         parsed = self._parsed_with_refs(address)
@@ -249,13 +230,13 @@ class TestHappyPath:
         }
 
         # do NOT create the SG node in the builder
-        h.invoke(
-            m,
+        context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
+        m.map_resource(
             address,
             "aws_vpc_security_group_egress_rule",
             rd,
             b,
-            parsed,
+            context,
         )
 
         assert any("Security group node not found" in r.message for r in caplog.records)

@@ -39,11 +39,16 @@ class AWSIAMRoleMapper(SingleResourceMapper):
             resource_type: resource type (always 'aws_iam_role')
             resource_data: resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext for variable resolution
         """
         logger.info("Mapping IAM Role resource: '%s'", resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -68,6 +73,12 @@ class AWSIAMRoleMapper(SingleResourceMapper):
             .with_property("component_version", "1.0")
         )
 
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
         # Build metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
 
@@ -84,44 +95,44 @@ class AWSIAMRoleMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # Core IAM Role properties
-        role_name = values.get("name")
-        if role_name:
-            metadata["aws_role_name"] = role_name
+        # Core IAM Role properties - use metadata values for concrete resolution
+        metadata_role_name = metadata_values.get("name")
+        if metadata_role_name:
+            metadata["aws_role_name"] = metadata_role_name
 
         # Assume role policy (required)
-        assume_role_policy = values.get("assume_role_policy")
-        if assume_role_policy:
+        metadata_assume_role_policy = metadata_values.get("assume_role_policy")
+        if metadata_assume_role_policy:
             # Store as parsed dictionary for better YAML readability
-            parsed_policy = self._parse_policy_document(assume_role_policy)
+            parsed_policy = self._parse_policy_document(metadata_assume_role_policy)
             metadata["aws_assume_role_policy"] = parsed_policy
 
-        # Optional properties
-        description = values.get("description")
-        if description:
-            metadata["aws_role_description"] = description
+        # Optional properties - use metadata values for concrete resolution
+        metadata_description = metadata_values.get("description")
+        if metadata_description:
+            metadata["aws_role_description"] = metadata_description
 
-        path = values.get("path")
-        if path:
-            metadata["aws_role_path"] = path
+        metadata_path = metadata_values.get("path")
+        if metadata_path:
+            metadata["aws_role_path"] = metadata_path
 
-        max_session_duration = values.get("max_session_duration")
-        if max_session_duration:
-            metadata["aws_max_session_duration"] = max_session_duration
+        metadata_max_session_duration = metadata_values.get("max_session_duration")
+        if metadata_max_session_duration:
+            metadata["aws_max_session_duration"] = metadata_max_session_duration
 
-        permissions_boundary = values.get("permissions_boundary")
-        if permissions_boundary:
-            metadata["aws_permissions_boundary"] = permissions_boundary
+        metadata_permissions_boundary = metadata_values.get("permissions_boundary")
+        if metadata_permissions_boundary:
+            metadata["aws_permissions_boundary"] = metadata_permissions_boundary
 
-        force_detach_policies = values.get("force_detach_policies")
-        if force_detach_policies is not None:
-            metadata["aws_force_detach_policies"] = force_detach_policies
+        metadata_force_detach_policies = metadata_values.get("force_detach_policies")
+        if metadata_force_detach_policies is not None:
+            metadata["aws_force_detach_policies"] = metadata_force_detach_policies
 
         # Handle inline policies (deprecated but still supported)
-        inline_policies = values.get("inline_policy", [])
-        if inline_policies:
+        metadata_inline_policies = metadata_values.get("inline_policy", [])
+        if metadata_inline_policies:
             processed_inline_policies = []
-            for policy in inline_policies:
+            for policy in metadata_inline_policies:
                 processed_policy = {}
                 if policy.get("name"):
                     processed_policy["name"] = policy["name"]
@@ -135,37 +146,37 @@ class AWSIAMRoleMapper(SingleResourceMapper):
                 metadata["aws_inline_policies"] = processed_inline_policies
 
         # Handle managed policy ARNs (deprecated but still supported)
-        managed_policy_arns = values.get("managed_policy_arns", [])
-        if managed_policy_arns:
-            metadata["aws_managed_policy_arns"] = managed_policy_arns
+        metadata_managed_policy_arns = metadata_values.get("managed_policy_arns", [])
+        if metadata_managed_policy_arns:
+            metadata["aws_managed_policy_arns"] = metadata_managed_policy_arns
 
         # Tags for the role
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Additional AWS properties that might be available
-        region = values.get("region")
-        if region:
-            metadata["aws_region"] = region
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
         # Set computed attributes if available
-        arn = values.get("arn")
-        if arn:
-            metadata["aws_arn"] = arn
+        metadata_arn = metadata_values.get("arn")
+        if metadata_arn:
+            metadata["aws_arn"] = metadata_arn
 
-        create_date = values.get("create_date")
-        if create_date:
-            metadata["aws_create_date"] = create_date
+        metadata_create_date = metadata_values.get("create_date")
+        if metadata_create_date:
+            metadata["aws_create_date"] = metadata_create_date
 
-        unique_id = values.get("unique_id")
-        if unique_id:
-            metadata["aws_unique_id"] = unique_id
+        metadata_unique_id = metadata_values.get("unique_id")
+        if metadata_unique_id:
+            metadata["aws_unique_id"] = metadata_unique_id
 
         # Attach collected metadata to the node
         role_node.with_metadata(metadata)
@@ -219,23 +230,17 @@ class AWSIAMRoleMapper(SingleResourceMapper):
 
         logger.debug("IAM Role node '%s' created successfully.", node_name)
 
-        # Debug: mapped properties
-        logger.debug(
-            "Mapped properties for '%s':\n"
-            "  - Role Name: %s\n"
-            "  - Path: %s\n"
-            "  - Max Session Duration: %s\n"
-            "  - Inline Policies: %d\n"
-            "  - Managed Policy ARNs: %d\n"
-            "  - Tags: %s",
-            node_name,
-            role_name,
-            path,
-            max_session_duration,
-            len(inline_policies),
-            len(managed_policy_arns),
-            tags,
-        )
+        # Debug: mapped properties - use metadata values for concrete display
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Mapped properties for '%s':", node_name)
+            logger.debug("  - Role Name: %s", metadata_role_name)
+            logger.debug("  - Path: %s", metadata_path)
+            logger.debug("  - Max Session Duration: %s", metadata_max_session_duration)
+            logger.debug("  - Inline Policies: %d", len(metadata_inline_policies))
+            logger.debug(
+                "  - Managed Policy ARNs: %d", len(metadata_managed_policy_arns)
+            )
+            logger.debug("  - Tags: %s", metadata_tags)
 
     def _format_policy_for_yaml_literal(self, policy_content: str | dict) -> str:
         """Format policy content for YAML literal block (|) syntax.

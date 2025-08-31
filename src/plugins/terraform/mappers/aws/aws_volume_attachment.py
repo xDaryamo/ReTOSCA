@@ -17,6 +17,13 @@ class AWSVolumeAttachmentMapper(SingleResourceMapper):
     This mapper doesn't create a separate node but instead modifies existing nodes
     to establish the attachment relationship between a Compute node and a
     BlockStorage node.
+
+    Args:
+        resource_name: Name of the aws_volume_attachment resource
+        resource_type: Type of the resource (always 'aws_volume_attachment')
+        resource_data: Resource configuration data from Terraform plan
+        builder: ServiceTemplateBuilder instance for TOSCA template construction
+        context: TerraformMappingContext for dependency resolution and variable handling
     """
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
@@ -37,15 +44,22 @@ class AWSVolumeAttachmentMapper(SingleResourceMapper):
         Compute node to add a local_storage requirement pointing to the EBS volume.
 
         Args:
-            resource_name: resource name (e.g. 'aws_volume_attachment.ebs_att')
-            resource_type: resource type (always 'aws_volume_attachment')
-            resource_data: resource data from the Terraform plan
+            resource_name: Resource name (e.g. 'aws_volume_attachment.ebs_att')
+            resource_type: Resource type (always 'aws_volume_attachment')
+            resource_data: Resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext for dependency resolution and
+                variable handling
         """
         logger.info("Processing volume attachment resource: '%s'", resource_name)
 
-        # Extract values and configuration
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
+
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -118,11 +132,17 @@ class AWSVolumeAttachmentMapper(SingleResourceMapper):
             instance_node, volume_node_name, device_name, resource_name
         )
 
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
         logger.info(
             "Successfully added volume attachment: %s -> %s (device: %s)",
             instance_node_name,
             volume_node_name,
-            device_name,
+            metadata_values.get("device_name", device_name),
         )
 
     def _extract_references(

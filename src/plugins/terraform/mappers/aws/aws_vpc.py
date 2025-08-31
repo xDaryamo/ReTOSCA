@@ -38,8 +38,13 @@ class AWSVPCMapper(SingleResourceMapper):
         """
         logger.info(f"Mapping AWS VPC resource: '{resource_name}'")
 
-        # Actual values are under the 'values' key in the plan JSON
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
+
         if not values:
             logger.warning(
                 f"Resource '{resource_name}' has no 'values' section. Skipping."
@@ -75,10 +80,10 @@ class AWSVPCMapper(SingleResourceMapper):
         enable_dns_support = values.get("enable_dns_support")
 
         # Enable classiclink (deprecated)
-        enable_classiclink = values.get("enable_classiclink")
+        values.get("enable_classiclink")
 
         # Enable classiclink DNS support (deprecated)
-        enable_classiclink_dns_support = values.get("enable_classiclink_dns_support")
+        values.get("enable_classiclink_dns_support")
 
         # Assign generated IPv6 CIDR block
         assign_generated_ipv6_cidr_block = values.get(
@@ -89,10 +94,10 @@ class AWSVPCMapper(SingleResourceMapper):
         ipv6_cidr_block = values.get("ipv6_cidr_block")
 
         # IPv6 IPAM pool ID
-        ipv6_ipam_pool_id = values.get("ipv6_ipam_pool_id")
+        values.get("ipv6_ipam_pool_id")
 
         # IPv6 netmask length
-        ipv6_netmask_length = values.get("ipv6_netmask_length")
+        values.get("ipv6_netmask_length")
 
         # Map standard TOSCA Network properties
 
@@ -118,6 +123,12 @@ class AWSVPCMapper(SingleResourceMapper):
         # Add the standard 'link' capability for Network nodes
         network_node.add_capability("link").and_node()
 
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
         # Build metadata containing Terraform and AWS information
         metadata = {}
 
@@ -130,66 +141,91 @@ class AWSVPCMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # AWS VPC specific information
-        if instance_tenancy:
-            metadata["aws_instance_tenancy"] = instance_tenancy
-        if enable_dns_hostnames is not None:
-            metadata["aws_enable_dns_hostnames"] = enable_dns_hostnames
-        if enable_dns_support is not None:
-            metadata["aws_enable_dns_support"] = enable_dns_support
-        if enable_classiclink is not None:
-            metadata["aws_enable_classiclink"] = enable_classiclink
-        if enable_classiclink_dns_support is not None:
-            metadata["aws_enable_classiclink_dns_support"] = (
-                enable_classiclink_dns_support
-            )
-        if assign_generated_ipv6_cidr_block is not None:
-            metadata["aws_assign_generated_ipv6_cidr_block"] = (
-                assign_generated_ipv6_cidr_block
-            )
-        if ipv6_cidr_block:
-            metadata["aws_ipv6_cidr_block"] = ipv6_cidr_block
-        if ipv6_ipam_pool_id:
-            metadata["aws_ipv6_ipam_pool_id"] = ipv6_ipam_pool_id
-        if ipv6_netmask_length is not None:
-            metadata["aws_ipv6_netmask_length"] = ipv6_netmask_length
+        # AWS VPC specific information - use metadata_values to ensure concrete values
+        metadata_instance_tenancy = metadata_values.get("instance_tenancy")
+        if metadata_instance_tenancy:
+            metadata["aws_instance_tenancy"] = metadata_instance_tenancy
 
-        # AWS VPC tags
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_enable_dns_hostnames = metadata_values.get("enable_dns_hostnames")
+        if metadata_enable_dns_hostnames is not None:
+            metadata["aws_enable_dns_hostnames"] = metadata_enable_dns_hostnames
+
+        metadata_enable_dns_support = metadata_values.get("enable_dns_support")
+        if metadata_enable_dns_support is not None:
+            metadata["aws_enable_dns_support"] = metadata_enable_dns_support
+
+        metadata_enable_classiclink = metadata_values.get("enable_classiclink")
+        if metadata_enable_classiclink is not None:
+            metadata["aws_enable_classiclink"] = metadata_enable_classiclink
+
+        metadata_enable_classiclink_dns_support = metadata_values.get(
+            "enable_classiclink_dns_support"
+        )
+        if metadata_enable_classiclink_dns_support is not None:
+            metadata["aws_enable_classiclink_dns_support"] = (
+                metadata_enable_classiclink_dns_support
+            )
+
+        metadata_assign_generated_ipv6_cidr_block = metadata_values.get(
+            "assign_generated_ipv6_cidr_block"
+        )
+        if metadata_assign_generated_ipv6_cidr_block is not None:
+            metadata["aws_assign_generated_ipv6_cidr_block"] = (
+                metadata_assign_generated_ipv6_cidr_block
+            )
+
+        metadata_ipv6_cidr_block = metadata_values.get("ipv6_cidr_block")
+        if metadata_ipv6_cidr_block:
+            metadata["aws_ipv6_cidr_block"] = metadata_ipv6_cidr_block
+
+        metadata_ipv6_ipam_pool_id = metadata_values.get("ipv6_ipam_pool_id")
+        if metadata_ipv6_ipam_pool_id:
+            metadata["aws_ipv6_ipam_pool_id"] = metadata_ipv6_ipam_pool_id
+
+        metadata_ipv6_netmask_length = metadata_values.get("ipv6_netmask_length")
+        if metadata_ipv6_netmask_length is not None:
+            metadata["aws_ipv6_netmask_length"] = metadata_ipv6_netmask_length
+
+        # AWS VPC tags - use concrete metadata values
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
         # Extract additional AWS info for extra metadata
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Default security group ID (populated after creation)
-        default_security_group_id = values.get("default_security_group_id")
-        if default_security_group_id:
-            metadata["aws_default_security_group_id"] = default_security_group_id
+        metadata_default_security_group_id = metadata_values.get(
+            "default_security_group_id"
+        )
+        if metadata_default_security_group_id:
+            metadata["aws_default_security_group_id"] = (
+                metadata_default_security_group_id
+            )
 
         # Default network ACL ID (populated after creation)
-        default_network_acl_id = values.get("default_network_acl_id")
-        if default_network_acl_id:
-            metadata["aws_default_network_acl_id"] = default_network_acl_id
+        metadata_default_network_acl_id = metadata_values.get("default_network_acl_id")
+        if metadata_default_network_acl_id:
+            metadata["aws_default_network_acl_id"] = metadata_default_network_acl_id
 
         # Default route table ID (populated after creation)
-        default_route_table_id = values.get("default_route_table_id")
-        if default_route_table_id:
-            metadata["aws_default_route_table_id"] = default_route_table_id
+        metadata_default_route_table_id = metadata_values.get("default_route_table_id")
+        if metadata_default_route_table_id:
+            metadata["aws_default_route_table_id"] = metadata_default_route_table_id
 
         # Main route table ID (populated after creation)
-        main_route_table_id = values.get("main_route_table_id")
-        if main_route_table_id:
-            metadata["aws_main_route_table_id"] = main_route_table_id
+        metadata_main_route_table_id = metadata_values.get("main_route_table_id")
+        if metadata_main_route_table_id:
+            metadata["aws_main_route_table_id"] = metadata_main_route_table_id
 
         # Owner ID (populated after creation)
-        owner_id = values.get("owner_id")
-        if owner_id:
-            metadata["aws_owner_id"] = owner_id
+        metadata_owner_id = metadata_values.get("owner_id")
+        if metadata_owner_id:
+            metadata["aws_owner_id"] = metadata_owner_id
 
         # Attach all metadata to the node
         network_node.with_metadata(metadata)
@@ -252,4 +288,4 @@ class AWSVPCMapper(SingleResourceMapper):
             logger.debug(f"  - DNS Hostnames: {enable_dns_hostnames}")
             logger.debug(f"  - DNS Support: {enable_dns_support}")
             logger.debug(f"  - IPv6 CIDR: {ipv6_cidr_block}")
-            logger.debug(f"  - Tags: {tags}")
+            logger.debug(f"  - Tags: {metadata_tags}")

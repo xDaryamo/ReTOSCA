@@ -61,7 +61,7 @@ class VariableExtractor:
         Extract all Terraform variables from the plan JSON.
 
         Args:
-            parsed_data: The complete Terraform plan JSON
+            parsed_data: The complete Terraform data (with plan and state)
 
         Returns:
             Dictionary mapping variable name to VariableDefinition
@@ -69,7 +69,10 @@ class VariableExtractor:
         self._logger.info("Extracting Terraform variables from plan")
 
         variables = {}
-        config = parsed_data.get("configuration", {})
+
+        # Get plan data which contains variable definitions
+        plan_data = parsed_data.get("plan", {})
+        config = plan_data.get("configuration", {})
         root_module = config.get("root_module", {})
         terraform_vars = root_module.get("variables", {})
 
@@ -177,7 +180,9 @@ class VariableReferenceTracker:
         """Build the complete map of variable references and resolved values."""
         self._logger.info("Building variable reference map")
 
-        config = self.parsed_data.get("configuration", {})
+        # Get configuration from plan data
+        plan_data = self.parsed_data.get("plan", {})
+        config = plan_data.get("configuration", {})
         root_module = config.get("root_module", {})
         resources = root_module.get("resources", [])
 
@@ -203,8 +208,9 @@ class VariableReferenceTracker:
                                 var_name,
                             )
 
-        # Build resolved values map from planned_values
-        planned_values = self.parsed_data.get("planned_values", {})
+        # Build resolved values map from plan data planned_values
+        plan_data = self.parsed_data.get("plan", {})
+        planned_values = plan_data.get("planned_values", {})
         root_module_planned = planned_values.get("root_module", {})
         self._extract_resolved_values(root_module_planned)
 

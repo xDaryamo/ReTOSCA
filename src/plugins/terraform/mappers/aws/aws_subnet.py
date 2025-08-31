@@ -29,20 +29,25 @@ class AWSSubnetMapper(SingleResourceMapper):
         builder: "ServiceTemplateBuilder",
         context: "TerraformMappingContext | None" = None,
     ) -> None:
-        """Translate an aws_subnet resource into a TOSCA Network node.
+        """Perform translation from aws_subnet to tosca.nodes.Network.
 
         Args:
-            resource_name: resource name (e.g. 'aws_subnet.subnet')
-            resource_type: resource type (always 'aws_subnet')
-            resource_data: resource data from the Terraform plan
-            builder: ServiceTemplateBuilder used to build the TOSCA template
+            resource_name: The name/identifier of the resource
+            resource_type: The type/kind of resource (e.g., 'aws_subnet')
+            resource_data: The resource configuration data
+            builder: The ServiceTemplateBuilder to populate with TOSCA resources
             context: TerraformMappingContext containing dependencies for reference
                 extraction
         """
         logger.info("Mapping Subnet resource: '%s'", resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
+
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -63,10 +68,62 @@ class AWSSubnetMapper(SingleResourceMapper):
         # Create the Network node representing the subnet
         subnet_node = builder.add_node(name=node_name, node_type="Network")
 
-        # Build metadata with Terraform and AWS information
-        metadata: dict[str, Any] = {}
+        # Extract AWS Subnet properties and map them to TOSCA Network properties
 
-        # Original resource information (name without the aws_subnet prefix)
+        # CIDR block of the subnet
+        cidr_block = values.get("cidr_block")
+
+        # Availability Zone
+        availability_zone = values.get("availability_zone")
+
+        # IPv6 CIDR block
+        ipv6_cidr_block = values.get("ipv6_cidr_block")
+
+        # Tags for the subnet
+        tags = values.get("tags", {})
+
+        # Map standard TOSCA Network properties
+
+        # CIDR block -> maps directly to the TOSCA 'cidr' property
+        if cidr_block:
+            subnet_node.with_property("cidr", cidr_block)
+
+        # IPv6 CIDR block
+        if ipv6_cidr_block:
+            subnet_node.with_property("ipv6_cidr", ipv6_cidr_block)
+
+        # Network name from availability zone or Name tag
+        if tags and "Name" in tags:
+            subnet_node.with_property("network_name", tags["Name"])
+        elif availability_zone:
+            subnet_node.with_property("network_name", f"subnet-{availability_zone}")
+
+        # Determine IP version
+        ip_version = 4  # Default
+        if ipv6_cidr_block:
+            if cidr_block:
+                ip_version = 4  # Dual stack, prefer IPv4
+            else:
+                ip_version = 6  # IPv6 only
+
+        subnet_node.with_property("ip_version", ip_version)
+
+        # DHCP is enabled by default in AWS VPCs/Subnets
+        subnet_node.with_property("dhcp_enabled", True)
+
+        # Add the standard 'link' capability for Network nodes
+        subnet_node.add_capability("link").and_node()
+
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
+        # Build metadata containing Terraform and AWS information
+        metadata = {}
+
+        # Original resource information
         metadata["original_resource_type"] = resource_type
         metadata["original_resource_name"] = clean_name
 
@@ -75,68 +132,75 @@ class AWSSubnetMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # Extract subnet properties and map them to Network node properties
-        # CIDR block of the subnet
-        cidr_block = values.get("cidr_block")
-        if cidr_block:
-            subnet_node.with_property("cidr", cidr_block)
+        # AWS Subnet specific information - use metadata_values for concrete values
+        metadata_availability_zone = metadata_values.get("availability_zone")
+        if metadata_availability_zone:
+            metadata["aws_availability_zone"] = metadata_availability_zone
 
-        # Availability Zone -> mapped to network_name for identification
-        availability_zone = values.get("availability_zone")
-        if availability_zone:
-            subnet_node.with_property("network_name", f"subnet-{availability_zone}")
-            metadata["aws_availability_zone"] = availability_zone
+        metadata_ipv6_cidr_block = metadata_values.get("ipv6_cidr_block")
+        if metadata_ipv6_cidr_block:
+            metadata["aws_ipv6_cidr_block"] = metadata_ipv6_cidr_block
 
-        # IPv6 CIDR block
-        ipv6_cidr_block = values.get("ipv6_cidr_block")
-        if ipv6_cidr_block:
-            subnet_node.with_property("ipv6_cidr", ipv6_cidr_block)
-            metadata["aws_ipv6_cidr_block"] = ipv6_cidr_block
+        metadata_map_public_ip_on_launch = metadata_values.get(
+            "map_public_ip_on_launch"
+        )
+        if metadata_map_public_ip_on_launch is not None:
+            metadata["aws_map_public_ip_on_launch"] = metadata_map_public_ip_on_launch
 
-        # Public IP assignment behavior
-        map_public_ip_on_launch = values.get("map_public_ip_on_launch")
-        if map_public_ip_on_launch is not None:
-            metadata["aws_map_public_ip_on_launch"] = map_public_ip_on_launch
+        metadata_vpc_id = metadata_values.get("vpc_id")
+        if metadata_vpc_id:
+            metadata["aws_vpc_id"] = metadata_vpc_id
 
-        # VPC ID (stored in metadata, used later for requirements)
-        vpc_id = values.get("vpc_id")
-        if vpc_id:
-            metadata["aws_vpc_id"] = vpc_id
+        # AWS Subnet tags - use concrete metadata values
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
-        # Tags for the subnet
-        tags = values.get("tags", {})
-        if tags:
-            if "Name" in tags:
-                subnet_node.with_property("network_name", tags["Name"])
-            metadata["aws_tags"] = tags
+        # Extract additional AWS info for extra metadata
 
         # Tags_all (all tags including provider defaults)
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Customer-owned IP pool (only for Outpost subnets)
-        customer_owned_ipv4_pool = values.get("customer_owned_ipv4_pool")
-        if customer_owned_ipv4_pool:
-            metadata["aws_customer_owned_ipv4_pool"] = customer_owned_ipv4_pool
+        metadata_customer_owned_ipv4_pool = metadata_values.get(
+            "customer_owned_ipv4_pool"
+        )
+        if metadata_customer_owned_ipv4_pool:
+            metadata["aws_customer_owned_ipv4_pool"] = metadata_customer_owned_ipv4_pool
 
         # Map public IP on customer-owned pool
-        map_customer_owned_ip_on_launch = values.get("map_customer_owned_ip_on_launch")
-        if map_customer_owned_ip_on_launch is not None:
+        metadata_map_customer_owned_ip_on_launch = metadata_values.get(
+            "map_customer_owned_ip_on_launch"
+        )
+        if metadata_map_customer_owned_ip_on_launch is not None:
             metadata["aws_map_customer_owned_ip_on_launch"] = (
-                map_customer_owned_ip_on_launch
+                metadata_map_customer_owned_ip_on_launch
             )
 
         # Outpost ARN (present for Outpost subnets)
-        outpost_arn = values.get("outpost_arn")
-        if outpost_arn:
-            metadata["aws_outpost_arn"] = outpost_arn
+        metadata_outpost_arn = metadata_values.get("outpost_arn")
+        if metadata_outpost_arn:
+            metadata["aws_outpost_arn"] = metadata_outpost_arn
 
-        # Attach collected metadata to the node
+        # Subnet ID (populated after creation)
+        metadata_subnet_id = metadata_values.get("id")
+        if metadata_subnet_id:
+            metadata["aws_subnet_id"] = metadata_subnet_id
+
+        # ARN (populated after creation)
+        metadata_arn = metadata_values.get("arn")
+        if metadata_arn:
+            metadata["aws_arn"] = metadata_arn
+
+        # Owner ID (populated after creation)
+        metadata_owner_id = metadata_values.get("owner_id")
+        if metadata_owner_id:
+            metadata["aws_owner_id"] = metadata_owner_id
+
+        # Attach all metadata to the node
         subnet_node.with_metadata(metadata)
-
-        # Add the standard 'link' capability for Network nodes
-        subnet_node.add_capability("link").and_node()
 
         # Add all discovered dependencies using injected context
         if context:
@@ -187,24 +251,14 @@ class AWSSubnetMapper(SingleResourceMapper):
 
         logger.debug("Network Subnet node '%s' created successfully.", node_name)
 
-        # Debug: mapped properties (single log)
-        ingress_launch = map_public_ip_on_launch
-        customer_launch = map_customer_owned_ip_on_launch
-        logger.debug(
-            "Mapped properties for '%s':\n"
-            "  - CIDR Block: %s\n"
-            "  - Availability Zone: %s\n"
-            "  - IPv6 CIDR: %s\n"
-            "  - Public IP on Launch: %s\n"
-            "  - VPC ID: %s\n"
-            "  - Tags: %s\n"
-            "  - Customer-owned IP on Launch: %s",
-            node_name,
-            cidr_block,
-            availability_zone,
-            ipv6_cidr_block,
-            ingress_launch,
-            vpc_id,
-            tags,
-            customer_launch,
-        )
+        # Log mapped properties for debugging
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Mapped properties for '{node_name}':")
+            logger.debug(f"  - CIDR Block: {cidr_block}")
+            logger.debug(f"  - Availability Zone: {metadata_availability_zone}")
+            logger.debug(f"  - IPv6 CIDR: {metadata_ipv6_cidr_block}")
+            logger.debug(f"  - Public IP on Launch: {metadata_map_public_ip_on_launch}")
+            logger.debug(f"  - VPC ID: {metadata_vpc_id}")
+            logger.debug(f"  - Tags: {metadata_tags}")
+            customer_ip_launch = metadata_map_customer_owned_ip_on_launch
+            logger.debug(f"  - Customer-owned IP Launch: {customer_ip_launch}")

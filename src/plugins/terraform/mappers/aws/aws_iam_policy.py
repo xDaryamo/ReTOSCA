@@ -39,11 +39,16 @@ class AWSIAMPolicyMapper(SingleResourceMapper):
             resource_type: resource type (always 'aws_iam_policy')
             resource_data: resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext for variable resolution
         """
         logger.info("Mapping IAM Policy resource: '%s'", resource_name)
 
-        # Validate input data
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
@@ -68,6 +73,12 @@ class AWSIAMPolicyMapper(SingleResourceMapper):
             .with_property("component_version", "1.0")
         )
 
+        # Get resolved values specifically for metadata (always concrete values)
+        if context:
+            metadata_values = context.get_resolved_values(resource_data, "metadata")
+        else:
+            metadata_values = resource_data.get("values", {})
+
         # Build metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
 
@@ -82,63 +93,67 @@ class AWSIAMPolicyMapper(SingleResourceMapper):
         if provider_name:
             metadata["terraform_provider"] = provider_name
 
-        # Core IAM Policy properties
-        policy_name = values.get("name")
-        if policy_name:
-            metadata["aws_policy_name"] = policy_name
+        # Core IAM Policy properties - use metadata values for concrete resolution
+        metadata_policy_name = metadata_values.get("name")
+        if metadata_policy_name:
+            metadata["aws_policy_name"] = metadata_policy_name
 
         # Policy document (required)
         policy_document = values.get("policy")
-        if policy_document:
+        metadata_policy_document = metadata_values.get("policy")
+        if metadata_policy_document:
             # Format policy document for metadata (using YAML literal block format)
-            formatted_policy = self._format_policy_for_yaml_literal(policy_document)
+            formatted_policy = self._format_policy_for_yaml_literal(
+                metadata_policy_document
+            )
             metadata["aws_policy_document"] = formatted_policy
 
-            # Add policy document as an artifact
+        # Add policy document as an artifact (use property value for processing)
+        if policy_document:
             artifact_content = self._format_policy_for_artifact(policy_document)
             policy_node.add_artifact(
                 "policy_document", "application/json", artifact_content
             ).and_node()
 
-        # Optional properties
-        description = values.get("description")
-        if description:
-            metadata["aws_policy_description"] = description
+        # Optional properties - use metadata values for concrete resolution
+        metadata_description = metadata_values.get("description")
+        if metadata_description:
+            metadata["aws_policy_description"] = metadata_description
 
-        path = values.get("path")
-        if path:
-            metadata["aws_policy_path"] = path
+        metadata_path = metadata_values.get("path")
+        if metadata_path:
+            metadata["aws_policy_path"] = metadata_path
 
-        name_prefix = values.get("name_prefix")
-        if name_prefix:
-            metadata["aws_policy_name_prefix"] = name_prefix
+        metadata_name_prefix = metadata_values.get("name_prefix")
+        if metadata_name_prefix:
+            metadata["aws_policy_name_prefix"] = metadata_name_prefix
 
         # Tags for the policy
-        tags = values.get("tags", {})
-        if tags:
-            metadata["aws_tags"] = tags
+        metadata_tags = metadata_values.get("tags", {})
+        if metadata_tags:
+            metadata["aws_tags"] = metadata_tags
 
         # Additional AWS properties that might be available
-        region = values.get("region")
-        if region:
-            metadata["aws_region"] = region
+        metadata_region = metadata_values.get("region")
+        if metadata_region:
+            metadata["aws_region"] = metadata_region
 
         # Set computed attributes if available
-        arn = values.get("arn")
-        if arn:
-            metadata["aws_arn"] = arn
+        metadata_arn = metadata_values.get("arn")
+        if metadata_arn:
+            metadata["aws_arn"] = metadata_arn
 
-        policy_id = values.get("policy_id")
-        if policy_id:
-            metadata["aws_policy_id"] = policy_id
+        metadata_policy_id = metadata_values.get("policy_id")
+        if metadata_policy_id:
+            metadata["aws_policy_id"] = metadata_policy_id
 
-        attachment_count = values.get("attachment_count")
-        if attachment_count is not None:
-            metadata["aws_attachment_count"] = attachment_count
+        metadata_attachment_count = metadata_values.get("attachment_count")
+        if metadata_attachment_count is not None:
+            metadata["aws_attachment_count"] = metadata_attachment_count
 
-        tags_all = values.get("tags_all", {})
-        if tags_all and tags_all != tags:
-            metadata["aws_tags_all"] = tags_all
+        metadata_tags_all = metadata_values.get("tags_all", {})
+        if metadata_tags_all and metadata_tags_all != metadata_tags:
+            metadata["aws_tags_all"] = metadata_tags_all
 
         # Attach collected metadata to the node
         policy_node.with_metadata(metadata)
@@ -192,23 +207,15 @@ class AWSIAMPolicyMapper(SingleResourceMapper):
 
         logger.debug("IAM Policy node '%s' created successfully.", node_name)
 
-        # Debug: mapped properties
-        logger.debug(
-            "Mapped properties for '%s':\n"
-            "  - Policy Name: %s\n"
-            "  - Path: %s\n"
-            "  - Description: %s\n"
-            "  - ARN: %s\n"
-            "  - Policy ID: %s\n"
-            "  - Tags: %s",
-            node_name,
-            policy_name,
-            path,
-            description,
-            arn,
-            policy_id,
-            tags,
-        )
+        # Debug: mapped properties - use metadata values for concrete display
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Mapped properties for '%s':", node_name)
+            logger.debug("  - Policy Name: %s", metadata_policy_name)
+            logger.debug("  - Path: %s", metadata_path)
+            logger.debug("  - Description: %s", metadata_description)
+            logger.debug("  - ARN: %s", metadata_arn)
+            logger.debug("  - Policy ID: %s", metadata_policy_id)
+            logger.debug("  - Tags: %s", metadata_tags)
 
     def _format_policy_for_yaml_literal(self, policy_content: str | dict) -> dict:
         """Format policy content as a structured dict for YAML metadata."""

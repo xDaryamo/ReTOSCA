@@ -41,11 +41,16 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             resource_type: resource type (always 'aws_route_table_association')
             resource_data: resource data from the Terraform plan
             builder: ServiceTemplateBuilder used to build the TOSCA template
+            context: TerraformMappingContext for variable resolution
         """
         logger.info("Processing route table association resource: '%s'", resource_name)
 
-        # Extract values and configuration
-        values = resource_data.get("values", {})
+        # Get resolved values using the context for properties
+        if context:
+            values = context.get_resolved_values(resource_data, "property")
+        else:
+            # Fallback to original values if no context available
+            values = resource_data.get("values", {})
         if not values:
             logger.warning(
                 "Resource '%s' has no 'values' section. Skipping.", resource_name
