@@ -149,8 +149,9 @@ class TerraformMappingContext:
 
     def _find_resource_by_id(self, resource_id: str, resource_type: str) -> str | None:
         """Find a resource address by its ID and type."""
-        # Look in values section (state JSON)
-        values = self.parsed_data.get("values", {})
+        # Look in structured state data
+        state_data = self.parsed_data.get("state", {})
+        values = state_data.get("values", {})
         if values:
             root_module = values.get("root_module", {})
             resources = root_module.get("resources", [])

@@ -114,12 +114,10 @@ class TerraformParser(BaseSourceFileParser):
                 # Extract the complete state (contains resolved values)
                 state_data = self._extract_complete_state(terraform_dir)
 
-                # Combine plan and state data
+                # Combine plan and state data in structured format
                 combined_data = {
                     "plan": plan_data,
                     "state": state_data,
-                    # For backward compatibility, include state data at root level
-                    **state_data,
                 }
 
                 self._logger.info(
@@ -206,12 +204,10 @@ class TerraformParser(BaseSourceFileParser):
             "values": planned_values,
         }
 
-        # Combine plan and synthetic state data
+        # Combine plan and synthetic state data in structured format
         combined_data = {
             "plan": plan_data,
             "state": synthetic_state,
-            # For backward compatibility, include synthetic state at root level
-            **synthetic_state,
         }
 
         return combined_data
@@ -277,12 +273,12 @@ class TerraformParser(BaseSourceFileParser):
             self._logger.warning("Destroy failed, continuing with plan extraction")
 
         # Get the plan in JSON format with -out to save plan file
-        plan_file = terraform_dir / "terraform.plan"
-        cmd = ["tflocal", "plan", "-out", str(plan_file)]
+        plan_file = "terraform.plan"  # Use relative filename
+        cmd = ["tflocal", "plan", "-out", plan_file]
         self._run_command(cmd, terraform_dir)
 
         # Extract JSON from the saved plan
-        cmd = ["tflocal", "show", "-json", str(plan_file)]
+        cmd = ["tflocal", "show", "-json", plan_file]
         result = self._run_command(cmd, terraform_dir, capture_output=True)
 
         try:
@@ -293,8 +289,9 @@ class TerraformParser(BaseSourceFileParser):
             self._logger.debug(f"Extracted plan with {len(variables)} variables")
 
             # Clean up the plan file
-            if plan_file.exists():
-                plan_file.unlink()
+            plan_file_path = terraform_dir / plan_file
+            if plan_file_path.exists():
+                plan_file_path.unlink()
 
             return plan_data
         except json.JSONDecodeError as e:

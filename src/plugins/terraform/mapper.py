@@ -301,8 +301,9 @@ class TerraformMapper(BaseResourceMapper):
         parsed_data: dict[str, Any], resource_id: str, resource_type: str
     ) -> str | None:
         """Find a resource address by its ID and type."""
-        # Look in values section (state JSON)
-        values = parsed_data.get("values", {})
+        # Look in structured state data
+        state_data = parsed_data.get("state", {})
+        values = state_data.get("values", {})
         if values:
             root_module = values.get("root_module", {})
             resources = root_module.get("resources", [])
@@ -362,9 +363,10 @@ class TerraformMapper(BaseResourceMapper):
             root_module = planned_values.get("root_module")
             self._logger.debug("Found 'planned_values' structure (plan JSON)")
 
-        # Check for applied state (from show on applied state)
+        # Check for applied state (from structured state data)
         if not root_module:
-            values = parsed_data.get("values")
+            state_data = parsed_data.get("state", {})
+            values = state_data.get("values", {})
             if values:
                 root_module = values.get("root_module")
                 self._logger.debug("Found 'values' structure (state JSON)")
