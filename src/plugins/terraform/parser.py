@@ -87,12 +87,13 @@ class TerraformParser(BaseSourceFileParser):
     def _deploy_and_extract_state(self, terraform_dir: Path) -> dict[str, Any]:
         """
         Deploy Terraform configuration and extract both plan and state data.
+        Falls back to plan-only data if deployment fails due to unsupported services.
 
         Args:
             terraform_dir: Directory containing Terraform files
 
         Returns:
-            Combined data with both plan and state information
+            Combined data with both plan and state information, or plan-only data
         """
         self._logger.info(f"Starting Terraform deployment for: {terraform_dir}")
 
@@ -107,23 +108,36 @@ class TerraformParser(BaseSourceFileParser):
             # Extract plan JSON (contains variable definitions and references)
             plan_data = self._extract_plan_json(terraform_dir)
 
-            self._run_terraform_apply(terraform_dir)
+            try:
+                self._run_terraform_apply(terraform_dir)
 
-            # Extract the complete state (contains resolved values)
-            state_data = self._extract_complete_state(terraform_dir)
+                # Extract the complete state (contains resolved values)
+                state_data = self._extract_complete_state(terraform_dir)
 
-            # Combine plan and state data
-            combined_data = {
-                "plan": plan_data,
-                "state": state_data,
-                # For backward compatibility, include state data at root level
-                **state_data,
-            }
+                # Combine plan and state data
+                combined_data = {
+                    "plan": plan_data,
+                    "state": state_data,
+                    # For backward compatibility, include state data at root level
+                    **state_data,
+                }
 
-            self._logger.info(
-                "Successfully deployed and extracted Terraform plan and state"
-            )
-            return combined_data
+                self._logger.info(
+                    "Successfully deployed and extracted Terraform plan and state"
+                )
+                return combined_data
+
+            except subprocess.CalledProcessError as apply_error:
+                # Check if it's a LocalStack license/service issue
+                if self._is_localstack_service_error(apply_error):
+                    self._logger.warning(
+                        "Terraform apply failed due to LocalStack service limitations. "
+                        "Proceeding with plan-only data for mapping."
+                    )
+                    return self._create_plan_only_data(plan_data)
+                else:
+                    # Re-raise for other apply errors
+                    raise
 
         except subprocess.CalledProcessError as e:
             self._logger.error(f"Terraform command failed: {e}")
@@ -138,6 +152,69 @@ class TerraformParser(BaseSourceFileParser):
                     original_cwd.cwd()
                 except Exception:
                     pass
+
+    def _is_localstack_service_error(
+        self, error: subprocess.CalledProcessError
+    ) -> bool:
+        """
+        Check if the error is due to LocalStack service limitations.
+
+        Args:
+            error: The subprocess error from terraform apply
+
+        Returns:
+            True if the error is due to LocalStack service/license limitations
+        """
+        error_text = ""
+
+        # Check both stderr and stdout for error messages
+        if error.stderr:
+            error_text += error.stderr
+        if error.stdout:
+            error_text += error.stdout
+
+        if not error_text:
+            return False
+
+        error_indicators = [
+            "not included in your current license plan",
+            "has not yet been emulated by LocalStack",
+            "InternalFailure",
+            "api error InternalFailure",
+        ]
+
+        return any(indicator in error_text for indicator in error_indicators)
+
+    def _create_plan_only_data(self, plan_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Create a data structure compatible with the mapper using only plan data.
+
+        Args:
+            plan_data: The plan JSON data from terraform
+
+        Returns:
+            Data structure that mimics state format for mapper compatibility
+        """
+        self._logger.info("Creating plan-only data structure for mapping")
+
+        # Extract planned values and convert to state-like format
+        planned_values = plan_data.get("planned_values", {})
+
+        # Create a state-like structure with planned values
+        synthetic_state = {
+            "format_version": "1.0",
+            "values": planned_values,
+        }
+
+        # Combine plan and synthetic state data
+        combined_data = {
+            "plan": plan_data,
+            "state": synthetic_state,
+            # For backward compatibility, include synthetic state at root level
+            **synthetic_state,
+        }
+
+        return combined_data
 
     def _run_terraform_init(self, terraform_dir: Path) -> None:
         """
@@ -169,11 +246,15 @@ class TerraformParser(BaseSourceFileParser):
 
         Args:
             terraform_dir: Directory containing Terraform files
+
+        Raises:
+            subprocess.CalledProcessError: If apply fails
         """
         self._logger.info("Running tflocal apply...")
 
         cmd = ["tflocal", "apply", "-auto-approve"]
-        self._run_command(cmd, terraform_dir)
+        # Always capture output for apply to check error messages
+        self._run_command(cmd, terraform_dir, capture_output=True)
 
     def _extract_plan_json(self, terraform_dir: Path) -> dict[str, Any]:
         """
