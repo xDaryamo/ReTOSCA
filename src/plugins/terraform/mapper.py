@@ -48,12 +48,22 @@ class TerraformMapper(BaseResourceMapper):
             self._logger.info("Adding TOSCA inputs from Terraform variables")
             tosca_inputs = self._variable_context.get_tosca_inputs()
             for input_name, input_def in tosca_inputs.items():
+                input_kwargs = {
+                    "default": input_def.default,
+                    "required": input_def.required,
+                }
+
+                # Only add description if it's not None or empty
+                if input_def.description:
+                    input_kwargs["description"] = input_def.description
+
+                if input_def.entry_schema:
+                    input_kwargs["entry_schema"] = input_def.entry_schema
+
                 builder.with_input(
                     name=input_name,
                     param_type=input_def.param_type,
-                    description=input_def.description,
-                    default=input_def.default,
-                    required=input_def.required,
+                    **input_kwargs,
                 )
                 self._logger.debug(
                     f"Added TOSCA input: {input_name} ({input_def.param_type})"

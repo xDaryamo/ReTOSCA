@@ -39,6 +39,7 @@ class ToscaInputDefinition:
     description: str | None = None
     default: Any = None
     required: bool = True
+    entry_schema: str | None = None
 
 
 @dataclass
@@ -159,7 +160,9 @@ class VariableExtractor:
                 )
                 continue
 
-            tosca_type = self._map_terraform_type_to_tosca(var_def.var_type)
+            tosca_type, entry_schema = self._map_terraform_type_to_tosca(
+                var_def.var_type, var_def.default
+            )
             required = var_def.default is None  # Required if no default value
 
             tosca_input = ToscaInputDefinition(
@@ -168,6 +171,7 @@ class VariableExtractor:
                 description=var_def.description,
                 default=var_def.default,
                 required=required,
+                entry_schema=entry_schema,
             )
             tosca_inputs[var_name] = tosca_input
             self._logger.debug(
@@ -177,39 +181,77 @@ class VariableExtractor:
         self._logger.info(f"Converted {len(tosca_inputs)} variables to TOSCA inputs")
         return tosca_inputs
 
-    def _map_terraform_type_to_tosca(self, terraform_type: str | None) -> str:
+    def _map_terraform_type_to_tosca(
+        self, terraform_type: str | None, default_value: Any = None
+    ) -> tuple[str, str | None]:
         """
-        Map a Terraform type to a TOSCA type.
+        Map a Terraform type to a TOSCA type with optional entry_schema.
 
         Args:
             terraform_type: Terraform type string (e.g., "string", "list(string)")
+            default_value: Default value to help infer type when terraform_type is None
 
         Returns:
-            TOSCA type string
+            Tuple of (TOSCA type string, entry_schema or None)
         """
         if not terraform_type:
-            return "string"  # Default fallback
+            # Infer type from default value if no explicit type
+            if isinstance(default_value, dict):
+                return "map", "string"
+            elif isinstance(default_value, list):
+                return "list", "string"
+            return "string", None  # Default fallback
 
         # Handle simple types
         if terraform_type in self._type_mapping:
-            return self._type_mapping[terraform_type]
+            return self._type_mapping[terraform_type], None
 
         # Handle complex types like list(string), map(string), etc.
         if terraform_type.startswith("list("):
-            return "list"
+            # Extract entry type: list(string) -> string
+            entry_type = self._extract_entry_type(terraform_type)
+            return "list", entry_type
         elif terraform_type.startswith("map("):
-            return "map"
+            # Extract entry type: map(string) -> string
+            entry_type = self._extract_entry_type(terraform_type)
+            return "map", entry_type
         elif terraform_type.startswith("set("):
-            return "list"
+            # Extract entry type: set(string) -> string
+            entry_type = self._extract_entry_type(terraform_type)
+            return "list", entry_type  # TOSCA doesn't have set, use list
         elif terraform_type.startswith("object("):
-            return "map"
+            return "map", "string"  # Objects become maps with string entries
         elif terraform_type.startswith("tuple("):
-            return "list"
+            return "list", "string"  # Tuples become lists with string entries
 
         # Fallback for unknown types
         self._logger.warning(
             f"Unknown Terraform type '{terraform_type}', using 'string' as fallback"
         )
+        return "string", None
+
+    def _extract_entry_type(self, complex_type: str) -> str:
+        """
+        Extract the entry type from a complex Terraform type.
+
+        Args:
+            complex_type: Complex type like "list(string)" or "map(number)"
+
+        Returns:
+            Entry type string
+        """
+        import re
+
+        # Extract content between parentheses
+        match = re.match(r"\w+\((.+)\)", complex_type)
+        if match:
+            entry_type = match.group(1)
+            # Map the entry type to TOSCA equivalent
+            if entry_type in self._type_mapping:
+                return self._type_mapping[entry_type]
+            return entry_type
+
+        # Fallback to string
         return "string"
 
 
@@ -515,7 +557,12 @@ class VariableReferenceTracker:
         # Map: (resource_address, property_name) -> resolved_value
         self._resolved_values: dict[tuple[str, str], Any] = {}
 
+        # Map: (resource_address, property_name) -> (variable_name, map_key)
+        # For tracking map variable references like {$get_input: [var_name, key]}
+        self._map_variable_references: dict[tuple[str, str], tuple[str, str]] = {}
+
         self._build_reference_map()
+        self._detect_map_variable_patterns()
 
     def _build_reference_map(self):
         """Build the complete map of variable references and resolved values."""
@@ -568,6 +615,113 @@ class VariableReferenceTracker:
             len(self._resolved_values),
         )
 
+    def _detect_map_variable_patterns(self):
+        """Detect patterns where properties should use map variable references."""
+        self._logger.info("Detecting map variable patterns")
+
+        # Get the terraform variables to check for map types
+        terraform_variables = self._get_terraform_variables()
+        map_variables = {
+            name: var_def
+            for name, var_def in terraform_variables.items()
+            if self._is_map_variable(var_def)
+        }
+
+        if not map_variables:
+            self._logger.debug("No map variables found, skipping pattern detection")
+            return
+
+        # Analyze resolved values to find patterns matching map variable values
+        for (
+            resource_address,
+            prop_name,
+        ), resolved_value in self._resolved_values.items():
+            # Check if this value matches any map variable entry
+            for var_name, var_def in map_variables.items():
+                map_key = self._find_matching_map_key(
+                    resolved_value, var_def.default, resource_address
+                )
+                if map_key:
+                    # Found a match - this property should use get_input
+                    key = (resource_address, prop_name)
+                    self._map_variable_references[key] = (var_name, map_key)
+                    self._logger.debug(
+                        "Detected map variable pattern: %s.%s -> "
+                        "{$get_input: [%s, %s]}",
+                        resource_address,
+                        prop_name,
+                        var_name,
+                        map_key,
+                    )
+                    break  # Only match the first variable to avoid conflicts
+
+        self._logger.info(
+            "Detected %d map variable references", len(self._map_variable_references)
+        )
+
+    def _get_terraform_variables(self) -> dict[str, VariableDefinition]:
+        """Get terraform variables from the parsed data."""
+        try:
+            plan_data = self.parsed_data.get("plan", {})
+            config = plan_data.get("configuration", {})
+            root_module = config.get("root_module", {})
+            terraform_vars = root_module.get("variables", {})
+
+            variables = {}
+            for var_name, var_config in terraform_vars.items():
+                if isinstance(var_config, dict):
+                    var_def = VariableDefinition(
+                        name=var_name,
+                        var_type=var_config.get("type"),
+                        default=var_config.get("default"),
+                        description=var_config.get("description"),
+                        sensitive=var_config.get("sensitive", False),
+                    )
+                    variables[var_name] = var_def
+            return variables
+        except Exception as e:
+            self._logger.warning(f"Failed to get terraform variables: {e}")
+            return {}
+
+    def _is_map_variable(self, var_def: VariableDefinition) -> bool:
+        """Check if a variable definition represents a map type."""
+        # First check if default value is a dict (most reliable indicator)
+        if isinstance(var_def.default, dict):
+            return True
+
+        # Then check explicit type if available
+        if var_def.var_type:
+            var_type = var_def.var_type.lower()
+            return var_type == "map" or var_type.startswith("map(")
+
+        # If no explicit type and default is not a dict, not a map
+        return False
+
+    def _find_matching_map_key(
+        self, resolved_value: Any, map_default: dict | None, resource_address: str
+    ) -> str | None:
+        """Find which map key corresponds to a resolved value."""
+        if not isinstance(map_default, dict):
+            return None
+
+        # First try direct value matching
+        for key, value in map_default.items():
+            if value == resolved_value:
+                return key
+
+        # If no direct match, try to infer from resource address
+        # For resources like aws_subnet.example["subnet1"], extract "subnet1"
+        if "[" in resource_address and "]" in resource_address:
+            import re
+
+            match = re.search(r'\["(.+?)"\]', resource_address)
+            if match:
+                potential_key = match.group(1)
+                if potential_key in map_default:
+                    return potential_key
+
+        return None
+
     def _extract_resolved_values(
         self, module_data: dict[str, Any], module_prefix: str = ""
     ):
@@ -592,14 +746,21 @@ class VariableReferenceTracker:
     def is_variable_reference(self, resource_address: str, property_name: str) -> bool:
         """Check if a resource property references a variable."""
         key = (resource_address, property_name)
-        return key in self._variable_references
+        return key in self._variable_references or key in self._map_variable_references
 
     def get_variable_name(
         self, resource_address: str, property_name: str
     ) -> str | None:
         """Get the variable name referenced by a resource property."""
         key = (resource_address, property_name)
-        return self._variable_references.get(key)
+        # Check regular variable references first
+        if key in self._variable_references:
+            return self._variable_references[key]
+        # Check map variable references
+        if key in self._map_variable_references:
+            var_name, _ = self._map_variable_references[key]
+            return var_name
+        return None
 
     def get_resolved_value(self, resource_address: str, property_name: str) -> Any:
         """Get the resolved (concrete) value for a resource property."""
@@ -627,9 +788,20 @@ class VariableReferenceTracker:
         # Use $get_input if this property references a variable
         return self.is_variable_reference(resource_address, property_name)
 
+    def get_map_variable_reference(
+        self, resource_address: str, property_name: str
+    ) -> tuple[str, str] | None:
+        """Get the map variable reference (variable_name, key) for a property."""
+        key = (resource_address, property_name)
+        return self._map_variable_references.get(key)
+
     def get_all_variable_references(self) -> dict[tuple[str, str], str]:
         """Get all variable references for debugging/logging."""
         return self._variable_references.copy()
+
+    def get_all_map_variable_references(self) -> dict[tuple[str, str], tuple[str, str]]:
+        """Get all map variable references for debugging/logging."""
+        return self._map_variable_references.copy()
 
 
 class PropertyResolver:
@@ -660,17 +832,33 @@ class PropertyResolver:
         )
 
         if should_use_get_input:
-            var_name = self.variable_tracker.get_variable_name(
+            # Check for map variable references first
+            map_var_ref = self.variable_tracker.get_map_variable_reference(
                 resource_address, property_name
             )
-            if var_name:
+            if map_var_ref:
+                var_name, map_key = map_var_ref
+                self._logger.debug(
+                    "Using $get_input for %s.%s -> [%s, %s]",
+                    resource_address,
+                    property_name,
+                    var_name,
+                    map_key,
+                )
+                return {"$get_input": [var_name, map_key]}
+
+            # Check for regular variable references
+            regular_var_name = self.variable_tracker.get_variable_name(
+                resource_address, property_name
+            )
+            if regular_var_name:
                 self._logger.debug(
                     "Using $get_input for %s.%s -> %s",
                     resource_address,
                     property_name,
-                    var_name,
+                    regular_var_name,
                 )
-                return {"$get_input": var_name}
+                return {"$get_input": regular_var_name}
 
         # Fall back to concrete resolved value
         resolved_value = self.variable_tracker.get_resolved_value(
@@ -804,7 +992,9 @@ class VariableContext:
         self._logger.info(f"Total TOSCA outputs: {len(self.tosca_outputs)}")
 
         references = self.reference_tracker.get_all_variable_references()
+        map_references = self.reference_tracker.get_all_map_variable_references()
         self._logger.info(f"Total variable references: {len(references)}")
+        self._logger.info(f"Total map variable references: {len(map_references)}")
 
         # Group references by variable
         var_usage = {}
@@ -815,6 +1005,16 @@ class VariableContext:
 
         for var_name, usages in var_usage.items():
             self._logger.info(f"Variable '{var_name}' used in: {', '.join(usages)}")
+
+        # Group map variable references
+        map_var_usage = {}
+        for (resource_addr, prop_name), (var_name, key) in map_references.items():
+            if var_name not in map_var_usage:
+                map_var_usage[var_name] = []
+            map_var_usage[var_name].append(f"{resource_addr}.{prop_name}[{key}]")
+
+        for var_name, usages in map_var_usage.items():
+            self._logger.info(f"Map variable '{var_name}' used in: {', '.join(usages)}")
 
         # Log output information
         for output_name, output_def in self.terraform_outputs.items():

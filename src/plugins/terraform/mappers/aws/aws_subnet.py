@@ -88,9 +88,9 @@ class AWSSubnetMapper(SingleResourceMapper):
         if cidr_block:
             subnet_node.with_property("cidr", cidr_block)
 
-        # IPv6 CIDR block
-        if ipv6_cidr_block:
-            subnet_node.with_property("ipv6_cidr", ipv6_cidr_block)
+        # IPv6 CIDR block - store in metadata since TOSCA Network doesn't have an
+        # ipv6_cidr property; the ipv6_cidr_block will be stored in metadata for
+        # reference
 
         # Network name from availability zone or Name tag
         if tags and "Name" in tags:
