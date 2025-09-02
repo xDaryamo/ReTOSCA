@@ -2,11 +2,14 @@
 
 import json
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from src.core.common.base_parser import BaseSourceFileParser
+
+from .exceptions import TerraformDataError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +23,7 @@ class TerraformParser(BaseSourceFileParser):
     and relationships for TOSCA mapping.
     """
 
-    def __init__(self, encoding: str = "utf-8"):
+    def __init__(self, encoding: str = "utf-8") -> None:
         """
         Initialize the Terraform parser.
 
@@ -29,6 +32,54 @@ class TerraformParser(BaseSourceFileParser):
         """
         super().__init__(encoding)
         self._logger = logger.getChild(self.__class__.__name__)
+        self._validate_terraform_executable()
+
+    def _validate_terraform_executable(self) -> None:
+        """Validate that tflocal executable is available."""
+        if not shutil.which("tflocal"):
+            raise ValidationError("tflocal executable not found in PATH")
+
+    def _attempt_deployment_with_fallback(
+        self, terraform_dir: Path, plan_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Attempt deployment and extract state, with fallback to plan-only data.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+            plan_data: Previously extracted plan data
+
+        Returns:
+            Combined data with both plan and state information, or plan-only data
+        """
+        try:
+            self._run_terraform_apply(terraform_dir)
+
+            # Extract the complete state (contains resolved values)
+            state_data = self._extract_complete_state(terraform_dir)
+
+            # Combine plan and state data in structured format
+            combined_data = {
+                "plan": plan_data,
+                "state": state_data,
+            }
+
+            self._logger.info(
+                "Successfully deployed and extracted Terraform plan and state"
+            )
+            return combined_data
+
+        except subprocess.CalledProcessError as apply_error:
+            # Check if it's a LocalStack license/service issue
+            if self._is_localstack_service_error(apply_error):
+                self._logger.warning(
+                    "Terraform apply failed due to LocalStack service limitations. "
+                    "Proceeding with plan-only data for mapping."
+                )
+                return self._create_plan_only_data(plan_data)
+            else:
+                # Re-raise for other apply errors
+                raise
 
     def get_supported_extensions(self) -> list[str]:
         """
@@ -98,9 +149,6 @@ class TerraformParser(BaseSourceFileParser):
         self._logger.info(f"Starting Terraform deployment for: {terraform_dir}")
 
         try:
-            # Change to the Terraform directory
-            original_cwd = Path.cwd()
-
             # Execute Terraform commands in sequence
             self._run_terraform_init(terraform_dir)
             self._run_terraform_plan(terraform_dir)
@@ -108,48 +156,15 @@ class TerraformParser(BaseSourceFileParser):
             # Extract plan JSON (contains variable definitions and references)
             plan_data = self._extract_plan_json(terraform_dir)
 
-            try:
-                self._run_terraform_apply(terraform_dir)
-
-                # Extract the complete state (contains resolved values)
-                state_data = self._extract_complete_state(terraform_dir)
-
-                # Combine plan and state data in structured format
-                combined_data = {
-                    "plan": plan_data,
-                    "state": state_data,
-                }
-
-                self._logger.info(
-                    "Successfully deployed and extracted Terraform plan and state"
-                )
-                return combined_data
-
-            except subprocess.CalledProcessError as apply_error:
-                # Check if it's a LocalStack license/service issue
-                if self._is_localstack_service_error(apply_error):
-                    self._logger.warning(
-                        "Terraform apply failed due to LocalStack service limitations. "
-                        "Proceeding with plan-only data for mapping."
-                    )
-                    return self._create_plan_only_data(plan_data)
-                else:
-                    # Re-raise for other apply errors
-                    raise
+            # Attempt deployment and state extraction
+            return self._attempt_deployment_with_fallback(terraform_dir, plan_data)
 
         except subprocess.CalledProcessError as e:
             self._logger.error(f"Terraform command failed: {e}")
-            raise ValueError(f"Terraform deployment failed: {e}") from e
+            raise TerraformDataError(f"Terraform deployment failed: {e}") from e
         except Exception as e:
             self._logger.error(f"Failed to deploy Terraform: {e}")
             raise
-        finally:
-            # Always return to original directory
-            if "original_cwd" in locals():
-                try:
-                    original_cwd.cwd()
-                except Exception:
-                    pass
 
     def _is_localstack_service_error(
         self, error: subprocess.CalledProcessError
@@ -215,11 +230,27 @@ class TerraformParser(BaseSourceFileParser):
     def _run_terraform_init(self, terraform_dir: Path) -> None:
         """
         Run terraform init to initialize the working directory.
+        Handles existing LocalStack override files and skips if already initialized.
 
         Args:
             terraform_dir: Directory containing Terraform files
         """
+        # Check if already initialized
+        terraform_dir_path = terraform_dir / ".terraform"
+        if terraform_dir_path.exists() and terraform_dir_path.is_dir():
+            self._logger.info("Terraform already initialized, skipping tflocal init")
+            return
+
         self._logger.info("Running tflocal init...")
+
+        # Clean up any existing LocalStack override files that might cause conflicts
+        override_file = terraform_dir / "localstack_providers_override.tf"
+        if override_file.exists():
+            self._logger.debug("Removing existing LocalStack providers override file")
+            try:
+                override_file.unlink()
+            except Exception as e:
+                self._logger.warning(f"Failed to remove override file: {e}")
 
         cmd = ["tflocal", "init"]
         self._run_command(cmd, terraform_dir)
@@ -269,8 +300,10 @@ class TerraformParser(BaseSourceFileParser):
         try:
             destroy_cmd = ["tflocal", "destroy", "-auto-approve"]
             self._run_command(destroy_cmd, terraform_dir)
-        except subprocess.CalledProcessError:
-            self._logger.warning("Destroy failed, continuing with plan extraction")
+        except subprocess.CalledProcessError as e:
+            self._logger.warning(
+                f"Destroy failed, continuing with plan extraction: {e}"
+            )
 
         # Get the plan in JSON format with -out to save plan file
         plan_file = "terraform.plan"  # Use relative filename
@@ -296,7 +329,7 @@ class TerraformParser(BaseSourceFileParser):
             return plan_data
         except json.JSONDecodeError as e:
             self._logger.error(f"Failed to parse plan JSON: {e}")
-            raise ValueError(f"Invalid JSON in Terraform plan: {e}") from e
+            raise TerraformDataError(f"Invalid JSON in Terraform plan: {e}") from e
 
     def _extract_complete_state(self, terraform_dir: Path) -> dict[str, Any]:
         """
@@ -323,11 +356,11 @@ class TerraformParser(BaseSourceFileParser):
             return state_data
         except json.JSONDecodeError as e:
             self._logger.error(f"Failed to parse state JSON: {e}")
-            raise ValueError(f"Invalid JSON in Terraform state: {e}") from e
+            raise TerraformDataError(f"Invalid JSON in Terraform state: {e}") from e
 
     def _run_command(
         self, cmd: list[str], working_dir: Path, capture_output: bool = False
-    ) -> subprocess.CompletedProcess:
+    ) -> subprocess.CompletedProcess[str]:
         """
         Run a shell command in the specified directory.
 
@@ -341,7 +374,22 @@ class TerraformParser(BaseSourceFileParser):
 
         Raises:
             subprocess.CalledProcessError: If command fails
+            ValidationError: If inputs are invalid
         """
+        # Input validation
+        if not cmd:
+            raise ValidationError("Command cannot be empty")
+        if not working_dir.exists():
+            raise ValidationError(f"Working directory does not exist: {working_dir}")
+        if not working_dir.is_dir():
+            raise ValidationError(
+                f"Working directory is not a directory: {working_dir}"
+            )
+
+        # Security: Only allow tflocal commands
+        if cmd[0] != "tflocal":
+            raise ValidationError(f"Only tflocal commands are allowed, got: {cmd[0]}")
+
         self._logger.debug(f"Running command: {' '.join(cmd)} in {working_dir}")
 
         try:
@@ -361,14 +409,19 @@ class TerraformParser(BaseSourceFileParser):
 
         except subprocess.TimeoutExpired as e:
             self._logger.error(f"Command timed out: {' '.join(cmd)}")
-            raise ValueError(f"Terraform command timed out: {' '.join(cmd)}") from e
+            raise TerraformDataError(
+                f"Terraform command timed out: {' '.join(cmd)}"
+            ) from e
         except subprocess.CalledProcessError as e:
             self._logger.error(
                 f"Command failed with exit code {e.returncode}: {' '.join(cmd)}"
             )
             if e.stderr:
                 self._logger.error(f"Error output: {e.stderr}")
-            raise
+            # Wrap subprocess errors in TerraformDataError
+            raise TerraformDataError(
+                f"Command failed with exit code {e.returncode}: {' '.join(cmd)}"
+            ) from e
 
     def validate_file(self, file_path: Path) -> None:
         """
@@ -382,13 +435,15 @@ class TerraformParser(BaseSourceFileParser):
             ValueError: If path doesn't contain valid Terraform files
         """
         if not file_path.exists():
-            raise FileNotFoundError(f"Path not found: {file_path}")
+            raise ValidationError(f"Path not found: {file_path}")
 
         # For directories, check for .tf files
         if file_path.is_dir():
             tf_files = list(file_path.glob("*.tf")) + list(file_path.glob("*.tf.json"))
             if not tf_files:
-                raise ValueError(f"No Terraform files found in directory: {file_path}")
+                raise ValidationError(
+                    f"No Terraform files found in directory: {file_path}"
+                )
             return
 
         # For files, use parent validation
@@ -436,7 +491,7 @@ class TerraformParser(BaseSourceFileParser):
             file_path: Path that failed to parse
 
         Raises:
-            Exception: Re-raises the original exception
+            TerraformDataError: Wrapped parsing error
         """
         self._logger.error(f"Failed to parse {file_path}: {error}")
 
@@ -451,7 +506,13 @@ class TerraformParser(BaseSourceFileParser):
         except Exception as cleanup_error:
             self._logger.warning(f"Cleanup failed: {cleanup_error}")
 
-        raise error
+        # Wrap in appropriate exception type
+        if isinstance(error, ValidationError | TerraformDataError):
+            raise error
+        else:
+            raise TerraformDataError(
+                f"Failed to parse Terraform configuration: {error}"
+            ) from error
 
     def _cleanup_on_error(self, terraform_dir: Path) -> None:
         """
