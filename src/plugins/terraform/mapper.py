@@ -70,6 +70,9 @@ class TerraformMapper(BaseResourceMapper):
         self._logger.info("Starting first pass: creating all primary resources")
         resources = list(self._extract_resources(parsed_data))
 
+        # Track Terraform resource address to TOSCA node name mapping for outputs
+        self._tosca_node_mapping: dict[str, str] = {}
+
         # Separate association resources from primary resources
         primary_resources = []
         association_resources = []
@@ -99,6 +102,11 @@ class TerraformMapper(BaseResourceMapper):
                     resource_name, resource_type, resource_data, builder
                 )
 
+        # Third pass: process outputs after all resources are mapped
+        if self._variable_context and self._variable_context.has_outputs():
+            self._logger.info("Starting third pass: processing Terraform outputs")
+            self._process_outputs(builder)
+
         self._logger.info("Resource mapping process completed.")
 
     def _process_single_resource(
@@ -117,6 +125,16 @@ class TerraformMapper(BaseResourceMapper):
                 self._logger.debug(
                     f"Mapping resource '{resource_name}' ({resource_type})"
                 )
+
+                # Generate TOSCA node name for tracking
+                from src.core.common.base_mapper import BaseResourceMapper
+
+                tosca_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    resource_name, resource_type
+                )
+
+                # Track the mapping for output processing
+                self._tosca_node_mapping[resource_name] = tosca_node_name
 
                 # Create context object for dependency injection
                 context = TerraformMappingContext(
@@ -152,6 +170,39 @@ class TerraformMapper(BaseResourceMapper):
             self._logger.warning(
                 f"No mapper registered for resource type: '{resource_type}'. Skipping."
             )
+
+    def _process_outputs(self, builder: "ServiceTemplateBuilder") -> None:
+        """Process Terraform outputs and add them to the TOSCA service template."""
+        if not self._variable_context:
+            self._logger.warning("No variable context available for output processing")
+            return
+
+        try:
+            # Get mapped TOSCA outputs
+            tosca_outputs = self._variable_context.get_tosca_outputs(
+                self._tosca_node_mapping
+            )
+
+            if not tosca_outputs:
+                self._logger.info("No outputs to process")
+                return
+
+            self._logger.info(f"Processing {len(tosca_outputs)} outputs")
+
+            # Add each output to the service template
+            for output_name, tosca_output in tosca_outputs.items():
+                output_kwargs = {"value": tosca_output.value}
+                if tosca_output.description:
+                    output_kwargs["description"] = tosca_output.description
+
+                builder.with_output(name=output_name, **output_kwargs)
+                self._logger.debug(f"Added output '{output_name}' to service template")
+
+            self._logger.info("Successfully processed all outputs")
+
+        except Exception as e:
+            self._logger.error(f"Error processing outputs: {e}")
+            # Don't re-raise - outputs are not critical for basic functionality
 
     def get_current_parsed_data(self) -> dict[str, Any]:
         """Return current plan data for sub-mappers."""
