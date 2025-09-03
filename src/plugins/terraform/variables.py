@@ -561,8 +561,13 @@ class VariableReferenceTracker:
         # For tracking map variable references like {$get_input: [var_name, key]}
         self._map_variable_references: dict[tuple[str, str], tuple[str, str]] = {}
 
+        # Map: (resource_address, property_name) -> (variable_name, list_index)
+        # For tracking list variable references like {$get_input: [var_name, index]}
+        self._list_variable_references: dict[tuple[str, str], tuple[str, int]] = {}
+
         self._build_reference_map()
         self._detect_map_variable_patterns()
+        self._detect_list_variable_patterns()
 
     def _build_reference_map(self):
         """Build the complete map of variable references and resolved values."""
@@ -659,6 +664,50 @@ class VariableReferenceTracker:
             "Detected %d map variable references", len(self._map_variable_references)
         )
 
+    def _detect_list_variable_patterns(self):
+        """Detect patterns where properties should use list variable references."""
+        self._logger.info("Detecting list variable patterns")
+
+        # Get the terraform variables to check for list types
+        terraform_variables = self._get_terraform_variables()
+        list_variables = {
+            name: var_def
+            for name, var_def in terraform_variables.items()
+            if self._is_list_variable(var_def)
+        }
+
+        if not list_variables:
+            self._logger.debug("No list variables found, skipping pattern detection")
+            return
+
+        # Analyze resolved values to find patterns matching list variable values
+        for (
+            resource_address,
+            prop_name,
+        ), resolved_value in self._resolved_values.items():
+            # Check if this value matches any list variable entry
+            for var_name, var_def in list_variables.items():
+                list_index = self._find_matching_list_index(
+                    resolved_value, var_def.default, resource_address
+                )
+                if list_index is not None:
+                    # Found a match - this property should use get_input
+                    key = (resource_address, prop_name)
+                    self._list_variable_references[key] = (var_name, list_index)
+                    self._logger.debug(
+                        "Detected list variable pattern: %s.%s -> "
+                        "{$get_input: [%s, %d]}",
+                        resource_address,
+                        prop_name,
+                        var_name,
+                        list_index,
+                    )
+                    break  # Only match the first variable to avoid conflicts
+
+        self._logger.info(
+            "Detected %d list variable references", len(self._list_variable_references)
+        )
+
     def _get_terraform_variables(self) -> dict[str, VariableDefinition]:
         """Get terraform variables from the parsed data."""
         try:
@@ -697,6 +746,20 @@ class VariableReferenceTracker:
         # If no explicit type and default is not a dict, not a map
         return False
 
+    def _is_list_variable(self, var_def: VariableDefinition) -> bool:
+        """Check if a variable definition represents a list type."""
+        # First check if default value is a list (most reliable indicator)
+        if isinstance(var_def.default, list):
+            return True
+
+        # Then check explicit type if available
+        if var_def.var_type:
+            var_type = var_def.var_type.lower()
+            return var_type == "list" or var_type.startswith("list(")
+
+        # If no explicit type and default is not a list, not a list
+        return False
+
     def _find_matching_map_key(
         self, resolved_value: Any, map_default: dict | None, resource_address: str
     ) -> str | None:
@@ -719,6 +782,36 @@ class VariableReferenceTracker:
                 potential_key = match.group(1)
                 if potential_key in map_default:
                     return potential_key
+
+        return None
+
+    def _find_matching_list_index(
+        self, resolved_value: Any, list_default: list | None, resource_address: str
+    ) -> int | None:
+        """Find which list index corresponds to a resolved value."""
+        if not isinstance(list_default, list):
+            return None
+
+        # First try direct value matching
+        try:
+            return list_default.index(resolved_value)
+        except (ValueError, TypeError):
+            pass
+
+        # If no direct match, try to infer from resource address
+        # For resources like aws_subnet.example[0], extract index 0
+        if "[" in resource_address and "]" in resource_address:
+            import re
+
+            # Match both quoted strings and integers in brackets
+            match = re.search(r'\[(["\']?(\d+)["\']?)\]', resource_address)
+            if match:
+                try:
+                    index = int(match.group(2))
+                    if 0 <= index < len(list_default):
+                        return index
+                except (ValueError, IndexError):
+                    pass
 
         return None
 
@@ -746,7 +839,11 @@ class VariableReferenceTracker:
     def is_variable_reference(self, resource_address: str, property_name: str) -> bool:
         """Check if a resource property references a variable."""
         key = (resource_address, property_name)
-        return key in self._variable_references or key in self._map_variable_references
+        return (
+            key in self._variable_references
+            or key in self._map_variable_references
+            or key in self._list_variable_references
+        )
 
     def get_variable_name(
         self, resource_address: str, property_name: str
@@ -759,6 +856,10 @@ class VariableReferenceTracker:
         # Check map variable references
         if key in self._map_variable_references:
             var_name, _ = self._map_variable_references[key]
+            return var_name
+        # Check list variable references
+        if key in self._list_variable_references:
+            var_name, _ = self._list_variable_references[key]
             return var_name
         return None
 
@@ -795,6 +896,13 @@ class VariableReferenceTracker:
         key = (resource_address, property_name)
         return self._map_variable_references.get(key)
 
+    def get_list_variable_reference(
+        self, resource_address: str, property_name: str
+    ) -> tuple[str, int] | None:
+        """Get the list variable reference (variable_name, index) for a property."""
+        key = (resource_address, property_name)
+        return self._list_variable_references.get(key)
+
     def get_all_variable_references(self) -> dict[tuple[str, str], str]:
         """Get all variable references for debugging/logging."""
         return self._variable_references.copy()
@@ -802,6 +910,12 @@ class VariableReferenceTracker:
     def get_all_map_variable_references(self) -> dict[tuple[str, str], tuple[str, str]]:
         """Get all map variable references for debugging/logging."""
         return self._map_variable_references.copy()
+
+    def get_all_list_variable_references(
+        self,
+    ) -> dict[tuple[str, str], tuple[str, int]]:
+        """Get all list variable references for debugging/logging."""
+        return self._list_variable_references.copy()
 
 
 class PropertyResolver:
@@ -846,6 +960,21 @@ class PropertyResolver:
                     map_key,
                 )
                 return {"$get_input": [var_name, map_key]}
+
+            # Check for list variable references
+            list_var_ref = self.variable_tracker.get_list_variable_reference(
+                resource_address, property_name
+            )
+            if list_var_ref:
+                var_name, list_index = list_var_ref
+                self._logger.debug(
+                    "Using $get_input for %s.%s -> [%s, %d]",
+                    resource_address,
+                    property_name,
+                    var_name,
+                    list_index,
+                )
+                return {"$get_input": [var_name, list_index]}
 
             # Check for regular variable references
             regular_var_name = self.variable_tracker.get_variable_name(
@@ -993,8 +1122,10 @@ class VariableContext:
 
         references = self.reference_tracker.get_all_variable_references()
         map_references = self.reference_tracker.get_all_map_variable_references()
+        list_references = self.reference_tracker.get_all_list_variable_references()
         self._logger.info(f"Total variable references: {len(references)}")
         self._logger.info(f"Total map variable references: {len(map_references)}")
+        self._logger.info(f"Total list variable references: {len(list_references)}")
 
         # Group references by variable
         var_usage = {}
@@ -1015,6 +1146,18 @@ class VariableContext:
 
         for var_name, usages in map_var_usage.items():
             self._logger.info(f"Map variable '{var_name}' used in: {', '.join(usages)}")
+
+        # Group list variable references
+        list_var_usage = {}
+        for (resource_addr, prop_name), (var_name, index) in list_references.items():
+            if var_name not in list_var_usage:
+                list_var_usage[var_name] = []
+            list_var_usage[var_name].append(f"{resource_addr}.{prop_name}[{index}]")
+
+        for var_name, usages in list_var_usage.items():
+            self._logger.info(
+                f"List variable '{var_name}' used in: {', '.join(usages)}"
+            )
 
         # Log output information
         for output_name, output_def in self.terraform_outputs.items():
