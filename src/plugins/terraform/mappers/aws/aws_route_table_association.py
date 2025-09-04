@@ -85,21 +85,26 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             )
             return
 
-        # Generate TOSCA node names
-        route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
-            route_table_address, "aws_route_table"
-        )
+        # Generate TOSCA node names using context-aware logic
+        if context:
+            route_table_node_name = context.generate_tosca_node_name_from_address(
+                route_table_address, "aws_route_table"
+            )
+        else:
+            route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
+                route_table_address, "aws_route_table"
+            )
 
         # Process subnet association
         if subnet_address:
             self._process_subnet_association(
-                builder, subnet_address, route_table_node_name, resource_name
+                builder, subnet_address, route_table_node_name, resource_name, context
             )
 
         # Process gateway association
         if gateway_address:
             self._process_gateway_association(
-                builder, gateway_address, route_table_node_name, resource_name
+                builder, gateway_address, route_table_node_name, resource_name, context
             )
 
     def _extract_references(
@@ -240,6 +245,7 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
         subnet_address: str,
         route_table_node_name: str,
         resource_name: str,
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Process subnet to route table association.
 
@@ -249,10 +255,15 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             route_table_node_name: TOSCA name of the route table node
             resource_name: Original resource name for logging
         """
-        # Generate subnet TOSCA node name
-        subnet_node_name = BaseResourceMapper.generate_tosca_node_name(
-            subnet_address, "aws_subnet"
-        )
+        # Generate subnet TOSCA node name using context-aware logic
+        if context:
+            subnet_node_name = context.generate_tosca_node_name_from_address(
+                subnet_address, "aws_subnet"
+            )
+        else:
+            subnet_node_name = BaseResourceMapper.generate_tosca_node_name(
+                subnet_address, "aws_subnet"
+            )
 
         # Find the subnet node in the builder
         subnet_node = self._find_node_in_builder(builder, subnet_node_name)
@@ -276,7 +287,7 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             )
             return
 
-        # Add the routing requirement to the subnet
+        # Add the routing requirement to the subnet using DependsOn
         self._add_routing_requirement(
             subnet_node, route_table_node_name, "subnet", resource_name
         )
@@ -293,6 +304,7 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
         gateway_address: str,
         route_table_node_name: str,
         resource_name: str,
+        context: "TerraformMappingContext | None" = None,
     ) -> None:
         """Process gateway to route table association.
 
@@ -311,10 +323,15 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             )
             return
 
-        # Generate gateway TOSCA node name
-        gateway_node_name = BaseResourceMapper.generate_tosca_node_name(
-            gateway_address, gateway_type
-        )
+        # Generate gateway TOSCA node name using context-aware logic
+        if context:
+            gateway_node_name = context.generate_tosca_node_name_from_address(
+                gateway_address, gateway_type
+            )
+        else:
+            gateway_node_name = BaseResourceMapper.generate_tosca_node_name(
+                gateway_address, gateway_type
+            )
 
         # Find the gateway node in the builder
         gateway_node = self._find_node_in_builder(builder, gateway_node_name)
@@ -404,11 +421,11 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             resource_name: Original resource name for logging
         """
         try:
-            # Add the routing requirement with LinksTo relationship
+            # Add the routing requirement with DependsOn relationship
             req_builder = (
                 source_node.add_requirement("dependency")
                 .to_node(route_table_node_name)
-                .with_relationship("LinksTo")
+                .with_relationship("DependsOn")
             )
 
             req_builder.and_node()

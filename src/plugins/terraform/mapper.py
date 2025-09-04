@@ -140,21 +140,28 @@ class TerraformMapper(BaseResourceMapper):
                     f"Mapping resource '{resource_name}' ({resource_type})"
                 )
 
-                # Generate TOSCA node name for tracking
-                from src.core.common.base_mapper import BaseResourceMapper
-
-                tosca_node_name = BaseResourceMapper.generate_tosca_node_name(
-                    resource_name, resource_type
-                )
-
-                # Track the mapping for output processing
-                self._tosca_node_mapping[resource_name] = tosca_node_name
-
-                # Create context object for dependency injection
+                # Create context object for dependency injection first
                 context = TerraformMappingContext(
                     parsed_data=self._current_parsed_data or {},
                     variable_context=self._variable_context,
                 )
+
+                # Generate TOSCA node name using improved array-aware logic
+                if context and context.variable_context:
+                    # Use the new context-based node name generation
+                    tosca_node_name = context.generate_tosca_node_name_from_address(
+                        resource_name, resource_type
+                    )
+                else:
+                    # Fallback to base mapper logic
+                    from src.core.common.base_mapper import BaseResourceMapper
+
+                    tosca_node_name = BaseResourceMapper.generate_tosca_node_name(
+                        resource_name, resource_type
+                    )
+
+                # Track the mapping for output processing
+                self._tosca_node_mapping[resource_name] = tosca_node_name
 
                 # Check if mapper supports context parameter
                 import inspect

@@ -161,6 +161,16 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         self._mapper.register_mapper("aws_route", AWSRouteMapper())
 
+        # Register the mapper for AWS VPC IPv4 CIDR Block Association
+        from .mappers.aws.aws_vpc_ipv4_cidr_block_association import (
+            AWSVPCIpv4CidrBlockAssociationMapper,
+        )
+
+        self._mapper.register_mapper(
+            "aws_vpc_ipv4_cidr_block_association",
+            AWSVPCIpv4CidrBlockAssociationMapper(),
+        )
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:

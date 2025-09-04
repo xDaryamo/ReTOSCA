@@ -133,14 +133,21 @@ class AWSRouteMapper(SingleResourceMapper):
             )
             return
 
-        # Generate TOSCA node names
-        route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
-            route_table_address, "aws_route_table"
-        )
-
-        target_node_name = BaseResourceMapper.generate_tosca_node_name(
-            target_address, target_type
-        )
+        # Generate TOSCA node names using context-aware logic
+        if context:
+            route_table_node_name = context.generate_tosca_node_name_from_address(
+                route_table_address, "aws_route_table"
+            )
+            target_node_name = context.generate_tosca_node_name_from_address(
+                target_address, target_type
+            )
+        else:
+            route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
+                route_table_address, "aws_route_table"
+            )
+            target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                target_address, target_type
+            )
 
         # Find the route table node in the builder
         route_table_node = self._find_node_in_builder(builder, route_table_node_name)

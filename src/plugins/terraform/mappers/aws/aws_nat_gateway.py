@@ -54,10 +54,16 @@ class AWSNATGatewayMapper(SingleResourceMapper):
             )
             return
 
-        # Generate a unique TOSCA node name using the utility function
-        node_name = BaseResourceMapper.generate_tosca_node_name(
-            resource_name, resource_type
-        )
+        # Generate a unique TOSCA node name using array-aware logic
+        if context:
+            node_name = context.generate_tosca_node_name_from_address(
+                resource_name, resource_type
+            )
+        else:
+            # Fallback to base mapper logic
+            node_name = BaseResourceMapper.generate_tosca_node_name(
+                resource_name, resource_type
+            )
 
         # Extract the clean name for metadata (without the type prefix)
         if "." in resource_name:
@@ -190,11 +196,23 @@ class AWSNATGatewayMapper(SingleResourceMapper):
         # Attach collected metadata to the node
         nat_node.with_metadata(metadata)
 
-        # Add dependencies using injected context
+        # Add dependencies using injected context with intelligent filtering
         if context:
-            terraform_refs = context.extract_terraform_references(resource_data)
+            # Import DependencyFilter at runtime to avoid circular dependency
+            from src.plugins.terraform.context import DependencyFilter
+
+            # Create filter to exclude IGW dependencies
+            # (NAT doesn't directly depend on IGW)
+            dependency_filter = DependencyFilter(
+                exclude_target_types={"aws_internet_gateway"}
+            )
+
+            terraform_refs = context.extract_filtered_terraform_references(
+                resource_data, dependency_filter
+            )
             logger.debug(
-                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+                f"Found {len(terraform_refs)} filtered terraform references "
+                f"for {resource_name}"
             )
 
             for prop_name, target_ref, relationship_type in terraform_refs:
@@ -205,32 +223,28 @@ class AWSNATGatewayMapper(SingleResourceMapper):
                     relationship_type,
                 )
 
-                if "." in target_ref:
-                    # target_ref is like "aws_subnet.private" or "aws_eip.nat"
-                    target_resource_type = target_ref.split(".", 1)[0]
-                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                        target_ref, target_resource_type
-                    )
+                # target_ref is now already resolved to TOSCA node name by context
+                target_node_name = target_ref
 
-                    # Add requirement with the property name as the requirement name
-                    requirement_name = (
-                        prop_name if prop_name not in ["dependency"] else "dependency"
-                    )
+                # Add requirement with the property name as the requirement name
+                requirement_name = (
+                    prop_name if prop_name not in ["dependency"] else "dependency"
+                )
 
-                    (
-                        nat_node.add_requirement(requirement_name)
-                        .to_node(target_node_name)
-                        .with_relationship(relationship_type)
-                        .and_node()
-                    )
+                (
+                    nat_node.add_requirement(requirement_name)
+                    .to_node(target_node_name)
+                    .with_relationship(relationship_type)
+                    .and_node()
+                )
 
-                    logger.info(
-                        "Added %s requirement '%s' to '%s' with relationship %s",
-                        requirement_name,
-                        target_node_name,
-                        node_name,
-                        relationship_type,
-                    )
+                logger.info(
+                    "Added %s requirement '%s' to '%s' with relationship %s",
+                    requirement_name,
+                    target_node_name,
+                    node_name,
+                    relationship_type,
+                )
         else:
             logger.warning(
                 "No context provided to detect dependencies for resource '%s'",
