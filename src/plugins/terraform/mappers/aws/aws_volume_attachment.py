@@ -98,12 +98,20 @@ class AWSVolumeAttachmentMapper(SingleResourceMapper):
             return
 
         # Generate TOSCA node names
-        instance_node_name = BaseResourceMapper.generate_tosca_node_name(
-            instance_address, "aws_instance"
-        )
-        volume_node_name = BaseResourceMapper.generate_tosca_node_name(
-            volume_address, "aws_ebs_volume"
-        )
+        # If address already looks like a TOSCA node name, use it directly
+        if "." in instance_address:
+            instance_node_name = BaseResourceMapper.generate_tosca_node_name(
+                instance_address, "aws_instance"
+            )
+        else:
+            instance_node_name = instance_address  # Already TOSCA format
+
+        if "." in volume_address:
+            volume_node_name = BaseResourceMapper.generate_tosca_node_name(
+                volume_address, "aws_ebs_volume"
+            )
+        else:
+            volume_node_name = volume_address  # Already TOSCA format
 
         # Find the instance node in the builder
         instance_node = self._find_node_in_builder(builder, instance_node_name)
@@ -165,22 +173,31 @@ class AWSVolumeAttachmentMapper(SingleResourceMapper):
 
         # Process each reference to find instance and volume
         for prop_name, target_ref, _relationship_type in terraform_refs:
-            if "." in target_ref:
-                target_resource_type = target_ref.split(".", 1)[0]
+            # Check for instance reference
+            if prop_name == "instance_id":
+                # Handle both terraform format (aws_instance.web) and
+                # TOSCA format (aws_instance_web)
+                if "." in target_ref and target_ref.startswith("aws_instance."):
+                    instance_address = target_ref  # Original terraform format
+                elif target_ref.startswith("aws_instance_"):
+                    instance_address = target_ref  # Already resolved TOSCA format
+                elif "." in target_ref:
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    if target_resource_type == "aws_instance":
+                        instance_address = target_ref
 
-                # Check for instance reference
-                if (
-                    prop_name == "instance_id"
-                    and target_resource_type == "aws_instance"
-                ):
-                    instance_address = target_ref
-
-                # Check for volume reference
-                elif (
-                    prop_name == "volume_id"
-                    and target_resource_type == "aws_ebs_volume"
-                ):
-                    volume_address = target_ref
+            # Check for volume reference
+            elif prop_name == "volume_id":
+                # Handle both terraform format (aws_ebs_volume.data) and
+                # TOSCA format (aws_ebs_volume_data)
+                if "." in target_ref and target_ref.startswith("aws_ebs_volume."):
+                    volume_address = target_ref  # Original terraform format
+                elif target_ref.startswith("aws_ebs_volume_"):
+                    volume_address = target_ref  # Already resolved TOSCA format
+                elif "." in target_ref:
+                    target_resource_type = target_ref.split(".", 1)[0]
+                    if target_resource_type == "aws_ebs_volume":
+                        volume_address = target_ref
 
         logger.debug(
             "Extracted references - Instance: %s, Volume: %s",

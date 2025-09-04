@@ -127,7 +127,27 @@ class TestALBExternalWithDependencies:
     def _parsed_with_refs(self, address: str) -> dict[str, Any]:
         # configuration includes subnet & sg references
         return {
-            "planned_values": {"root_module": {"resources": []}},
+            "planned_values": {
+                "root_module": {
+                    "resources": [
+                        {
+                            "address": "aws_subnet.public1",
+                            "type": "aws_subnet",
+                            "values": {"id": "subnet-123"},
+                        },
+                        {
+                            "address": "aws_subnet.public2",
+                            "type": "aws_subnet",
+                            "values": {"id": "subnet-456"},
+                        },
+                        {
+                            "address": "aws_security_group.lb_sg",
+                            "type": "aws_security_group",
+                            "values": {"id": "sg-789"},
+                        },
+                    ]
+                }
+            },
             "configuration": {
                 "root_module": {
                     "resources": [

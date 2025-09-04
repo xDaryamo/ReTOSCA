@@ -144,7 +144,18 @@ class TestHappyPath:
     def _parsed_with_refs(self, address: str) -> dict[str, Any]:
         # minimal config that carries the security_group_id and cidr refs
         return {
-            "planned_values": {"root_module": {"resources": []}},
+            "planned_values": {
+                "root_module": {
+                    "resources": [
+                        {
+                            "address": "aws_security_group.allow_tls",
+                            "name": "allow_tls",
+                            "type": "aws_security_group",
+                            "values": {"name": "allow-tls", "vpc_id": "vpc-123"},
+                        }
+                    ]
+                }
+            },
             "configuration": {
                 "root_module": {
                     "resources": [
@@ -233,5 +244,8 @@ class TestHappyPath:
             context,
         )
 
-        assert any("Security group node not found" in r.message for r in caplog.records)
+        assert any(
+            "Security group node not found for reference" in r.message
+            for r in caplog.records
+        )
         assert b.nodes == {}

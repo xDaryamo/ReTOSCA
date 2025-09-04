@@ -126,14 +126,33 @@ class TestMapResource:
 
         # Create a fake context that returns the expected reference
         class FakeContext:
+            def __init__(self):
+                # Add parsed_data attribute for route table discovery
+                self.parsed_data = {
+                    "planned_values": {"root_module": {"resources": []}},
+                    "state": {"values": {"root_module": {"resources": []}}},
+                }
+
             def extract_terraform_references(self, resource_data: dict[str, Any]):
-                return [("vpc_id", "aws_vpc.main", "tosca.relationships.DependsOn")]
+                return [("vpc_id", "aws_vpc_main", "tosca.relationships.DependsOn")]
+
+            def extract_filtered_terraform_references(
+                self,
+                resource_data: dict[str, Any],
+                dependency_filter=None,
+            ):
+                return [("vpc_id", "aws_vpc_main", "tosca.relationships.DependsOn")]
 
             def get_resolved_values(
                 self, resource_data: dict[str, Any], context: str = "property"
             ):
                 # Return the original values for testing
                 return resource_data.get("values", {})
+
+            def generate_tosca_node_name_from_address(
+                self, resource_address: str, resource_type: str | None = None
+            ):
+                return "aws_subnet_subnet_1_0"
 
         context = FakeContext()
         m.map_resource(res_name, res_type, data, b, context)

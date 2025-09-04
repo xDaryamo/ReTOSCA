@@ -238,32 +238,38 @@ class AWSSecurityGroupMapper(SingleResourceMapper):
                     relationship_type,
                 )
 
+                # Handle both Terraform format (aws_vpc.main) and
+                # TOSCA format (aws_vpc_main)
                 if "." in target_ref:
                     # target_ref is like "aws_vpc.main"
                     target_resource_type = target_ref.split(".", 1)[0]
                     target_node_name = BaseResourceMapper.generate_tosca_node_name(
                         target_ref, target_resource_type
                     )
+                else:
+                    # target_ref is already resolved to TOSCA node name
+                    # (e.g., aws_vpc_main)
+                    target_node_name = target_ref
 
-                    # Add requirement with the property name as the requirement name
-                    requirement_name = (
-                        prop_name if prop_name not in ["dependency"] else "dependency"
-                    )
+                # Add requirement with the property name as the requirement name
+                requirement_name = (
+                    prop_name if prop_name not in ["dependency"] else "dependency"
+                )
 
-                    (
-                        sg_node.add_requirement(requirement_name)
-                        .to_node(target_node_name)
-                        .with_relationship(relationship_type)
-                        .and_node()
-                    )
+                (
+                    sg_node.add_requirement(requirement_name)
+                    .to_node(target_node_name)
+                    .with_relationship(relationship_type)
+                    .and_node()
+                )
 
-                    logger.info(
-                        "Added %s requirement '%s' to '%s' with relationship %s",
-                        requirement_name,
-                        target_node_name,
-                        node_name,
-                        relationship_type,
-                    )
+                logger.info(
+                    "Added %s requirement '%s' to '%s' with relationship %s",
+                    requirement_name,
+                    target_node_name,
+                    node_name,
+                    relationship_type,
+                )
         else:
             logger.warning(
                 "No context provided to detect dependencies for resource '%s'",

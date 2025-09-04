@@ -20,6 +20,7 @@ class AWSRouteTableMapper(SingleResourceMapper):
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
         """Return True for resource type 'aws_route_table'."""
+        _ = resource_data  # Parameter required by protocol but not used
         return resource_type == "aws_route_table"
 
     def map_resource(

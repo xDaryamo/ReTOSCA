@@ -128,7 +128,7 @@ class AWSVPCSecurityGroupEgressRuleMapper(SingleResourceMapper):
         # Look for security_group_id reference
         sg_ref = None
         for prop_name, target_ref, _relationship_type in terraform_refs:
-            if prop_name == "security_group_id" and "." in target_ref:
+            if prop_name == "security_group_id":
                 sg_ref = target_ref
                 break
 
@@ -190,23 +190,25 @@ class AWSVPCSecurityGroupEgressRuleMapper(SingleResourceMapper):
         Find the security group node in the builder based on the reference.
 
         Args:
-            sg_ref: Security group reference (e.g., "aws_security_group.allow_tls")
+            sg_ref: Security group reference - can be either terraform format
+                    (e.g., "aws_security_group.allow_tls") or TOSCA node name
+                    (e.g., "aws_security_group_allow_tls")
             builder: Service template builder
 
         Returns:
             The security group node or None if not found
         """
-        if "." not in sg_ref:
-            logger.warning(f"Invalid security group reference format: '{sg_ref}'")
-            return None
-
-        # Extract resource type from reference
-        resource_type = sg_ref.split(".", 1)[0]
-
-        # Generate the expected TOSCA node name
-        sg_node_name = BaseResourceMapper.generate_tosca_node_name(
-            sg_ref, resource_type
-        )
+        # If sg_ref contains dots, it's a terraform reference that needs conversion
+        if "." in sg_ref:
+            # Extract resource type from reference
+            resource_type = sg_ref.split(".", 1)[0]
+            # Generate the expected TOSCA node name
+            sg_node_name = BaseResourceMapper.generate_tosca_node_name(
+                sg_ref, resource_type
+            )
+        else:
+            # It's already a TOSCA node name
+            sg_node_name = sg_ref
 
         # Try to get the node from the builder
         try:

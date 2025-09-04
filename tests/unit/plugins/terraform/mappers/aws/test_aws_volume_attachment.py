@@ -128,6 +128,22 @@ class TestHappyPath:
         }
 
         parsed = {
+            "planned_values": {
+                "root_module": {
+                    "resources": [
+                        {
+                            "address": "aws_instance.web",
+                            "type": "aws_instance",
+                            "values": {"id": "i-123"},
+                        },
+                        {
+                            "address": "aws_ebs_volume.data",
+                            "type": "aws_ebs_volume",
+                            "values": {"id": "vol-456"},
+                        },
+                    ]
+                }
+            },
             "configuration": {
                 "root_module": {
                     "resources": [
@@ -140,7 +156,7 @@ class TestHappyPath:
                         }
                     ]
                 }
-            }
+            },
         }
 
         context = TerraformMappingContext(parsed_data=parsed, variable_context=None)
@@ -196,7 +212,7 @@ class TestHappyPath:
         # No requirement added
         assert all(len(n.requirements) == 0 for n in b.nodes.values())
         assert any(
-            "Instance node 'aws_instance_web' not found" in r.message
+            "Could not resolve instance or volume references" in r.message
             for r in caplog.records
         )
 
@@ -236,7 +252,7 @@ class TestHappyPath:
         # No requirement added
         assert all(len(n.requirements) == 0 for n in b.nodes.values())
         assert any(
-            "Volume node 'aws_ebs_volume_data' not found" in r.message
+            "Could not resolve instance or volume references" in r.message
             for r in caplog.records
         )
 

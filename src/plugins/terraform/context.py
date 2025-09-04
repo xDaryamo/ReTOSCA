@@ -129,14 +129,30 @@ class TerraformMappingContext:
         seen_targets = set()
 
         for prop_name, target_ref, relationship_type in references:
-            # Use array-aware resolution to get the correct TOSCA node name
-            tosca_target = self.resolve_array_reference_with_context(
-                resource_data, target_ref
+            # Check if this is a variable reference
+            is_variable_ref = (
+                target_ref.startswith("var.")
+                or target_ref.startswith("local.")
+                or target_ref.startswith("data.")
             )
+            if is_variable_ref:
+                # For variable/data references, keep the original reference string
+                if target_ref not in seen_targets:
+                    resolved_references.append(
+                        (prop_name, target_ref, relationship_type)
+                    )
+                    seen_targets.add(target_ref)
+            else:
+                # For resource references, resolve to TOSCA node name
+                tosca_target = self.resolve_array_reference_with_context(
+                    resource_data, target_ref
+                )
 
-            if tosca_target and tosca_target not in seen_targets:
-                resolved_references.append((prop_name, tosca_target, relationship_type))
-                seen_targets.add(tosca_target)
+                if tosca_target and tosca_target not in seen_targets:
+                    resolved_references.append(
+                        (prop_name, tosca_target, relationship_type)
+                    )
+                    seen_targets.add(tosca_target)
 
         # Add synthetic dependencies if specified
         if dependency_filter and dependency_filter.synthetic_dependencies:
@@ -657,7 +673,6 @@ class TerraformMappingContext:
 
         # If source has an index but reference doesn't, try to apply the same index
         if source_components["index"] is not None and ref_components["index"] is None:
-
             # Try to find the target resource with the same index
             indexed_ref = f"{terraform_ref}[{source_components['index']}]"
 

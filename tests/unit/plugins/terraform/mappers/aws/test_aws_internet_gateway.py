@@ -125,12 +125,17 @@ class TestMapResource:
         # Create mock context that returns a dependency
         class FakeContext:
             def extract_terraform_references(self, resource_data: dict[str, Any]):
-                return [("vpc_id", "aws_vpc.main", "DependsOn")]
+                return [("vpc_id", "aws_vpc_main", "DependsOn")]
 
             def get_resolved_values(
                 self, resource_data: dict[str, Any], context_type: str
             ):
                 return resource_data.get("values", {})
+
+            def generate_tosca_node_name_from_address(
+                self, resource_address: str, resource_type: str | None = None
+            ):
+                return "aws_internet_gateway_gw_0"
 
         context = FakeContext()
         m.map_resource(res_name, res_type, data, b, context)
@@ -232,12 +237,17 @@ class TestMapResource:
         # Create mock context that returns a dependency
         class FakeContext:
             def extract_terraform_references(self, resource_data: dict[str, Any]):
-                return [("vpc_id", "aws_vpc.main", "DependsOn")]
+                return [("vpc_id", "aws_vpc_main", "DependsOn")]
 
             def get_resolved_values(
                 self, resource_data: dict[str, Any], context_type: str
             ):
                 return resource_data.get("values", {})
+
+            def generate_tosca_node_name_from_address(
+                self, resource_address: str, resource_type: str | None = None
+            ):
+                return "aws_egress_only_internet_gateway_egress"
 
         context = FakeContext()
         m.map_resource(res_name, res_type, data, b, context)

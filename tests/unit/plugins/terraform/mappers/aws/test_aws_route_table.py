@@ -134,12 +134,22 @@ class TestMapResourceHappyPath:
         # Create a fake context that returns the expected reference
         class FakeContext:
             def extract_terraform_references(self, resource_data: dict[str, Any]):
-                return [("vpc_id", "aws_vpc.main", "DependsOn")]
+                return [("vpc_id", "aws_vpc_main", "DependsOn")]
+
+            def extract_filtered_terraform_references(
+                self, resource_data: dict[str, Any], dependency_filter=None
+            ):
+                return [("vpc_id", "aws_vpc_main", "DependsOn")]
 
             def get_resolved_values(
                 self, resource_data: dict[str, Any], context_type: str
             ):
                 return resource_data.get("values", {})
+
+            def generate_tosca_node_name_from_address(
+                self, resource_address: str, resource_type: str | None = None
+            ):
+                return "aws_route_table_rt_0"
 
         context = FakeContext()
         m.map_resource(res_name, res_type, resource_data, b, context)
@@ -246,10 +256,20 @@ class TestEdgeCases:
             def extract_terraform_references(self, resource_data: dict[str, Any]):
                 return []
 
+            def extract_filtered_terraform_references(
+                self, resource_data: dict[str, Any], dependency_filter=None
+            ):
+                return []
+
             def get_resolved_values(
                 self, resource_data: dict[str, Any], context_type: str
             ):
                 return resource_data.get("values", {})
+
+            def generate_tosca_node_name_from_address(
+                self, resource_address: str, resource_type: str | None = None
+            ):
+                return "aws_route_table_onlyv4"
 
         context = FakeContext()
         m.map_resource(res_name, res_type, resource_data, b, context)

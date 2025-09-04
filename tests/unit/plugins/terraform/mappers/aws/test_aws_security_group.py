@@ -92,6 +92,65 @@ class Harness(TerraformMapper):
         self._current_parsed_data = parsed_data
         sg.map_resource(resource_name, resource_type, resource_data, builder)
 
+    def map(
+        self,
+        parsed_data: dict[str, Any],
+        builder: FakeBuilder,
+    ) -> None:
+        """Override map to use our test harness logic."""
+        self._current_parsed_data = parsed_data
+
+        # Extract resources using parent logic
+        for (
+            resource_name,
+            resource_type,
+            resource_data,
+        ) in self._extract_resources(parsed_data):
+            self._process_single_resource(
+                resource_name, resource_type, resource_data, builder
+            )
+
+    def _process_single_resource(
+        self,
+        resource_name: str,
+        resource_type: str,
+        resource_data: dict[str, Any],
+        builder,  # Accept any builder type to match parent signature
+    ) -> None:
+        """
+        Process a single resource using the appropriate mapper with proper context.
+        """
+        from src.plugins.terraform.context import TerraformMappingContext
+
+        mapper_strategy = self._mappers.get(resource_type)
+
+        if mapper_strategy:
+            # Uses can_map for a finer check
+            if mapper_strategy.can_map(resource_type, resource_data):
+                self._logger.debug(
+                    f"Mapping resource '{resource_name}' ({resource_type})"
+                )
+
+                # Create context object for dependency injection
+                context = TerraformMappingContext(
+                    parsed_data=self._current_parsed_data or {},
+                    variable_context=None,  # Not needed for this test
+                )
+
+                # Call the resource mapper with proper context
+                mapper_strategy.map_resource(
+                    resource_name, resource_type, resource_data, builder, context
+                )
+            else:
+                self._logger.debug(
+                    f"Skipping resource '{resource_name}' "
+                    f"({resource_type}) - cannot map"
+                )
+        else:
+            self._logger.debug(
+                f"No mapper registered for resource type '{resource_type}'"
+            )
+
 
 class TestCanMap:
     def test_true_for_sg(self) -> None:
@@ -225,7 +284,13 @@ class TestSeparateRulesAndDependencies:
                             "name": "allow_tls",
                             "type": "aws_security_group",
                             "values": {"name": "allow-tls", "vpc_id": "vpc-123"},
-                        }
+                        },
+                        {
+                            "address": "aws_vpc.main",
+                            "name": "main",
+                            "type": "aws_vpc",
+                            "values": {"id": "vpc-123", "cidr_block": "10.0.0.0/16"},
+                        },
                     ]
                 }
             },
