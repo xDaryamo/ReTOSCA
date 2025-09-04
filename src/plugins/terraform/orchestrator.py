@@ -146,6 +146,21 @@ class TerraformOrchestrator(BaseOrchestrator):
         aws_lb_mapper = AWSLoadBalancerMapper()
         self._mapper.register_mapper("aws_lb", aws_lb_mapper)
 
+        # Register the mapper for AWS Elastic IP
+        from .mappers.aws.aws_eip import AWSEIPMapper
+
+        self._mapper.register_mapper("aws_eip", AWSEIPMapper())
+
+        # Register the mapper for AWS NAT Gateway
+        from .mappers.aws.aws_nat_gateway import AWSNATGatewayMapper
+
+        self._mapper.register_mapper("aws_nat_gateway", AWSNATGatewayMapper())
+
+        # Register the mapper for AWS Route
+        from .mappers.aws.aws_route import AWSRouteMapper
+
+        self._mapper.register_mapper("aws_route", AWSRouteMapper())
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:

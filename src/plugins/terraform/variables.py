@@ -421,6 +421,28 @@ class OutputMapper:
                     "bucket": "name",  # Maps to ObjectStorage.name property
                 },
             },
+            "aws_eip": {
+                "tosca_node_type": "Network",
+                "attribute_mappings": {
+                    "public_ip": None,  # Maps to Network address-related attribute
+                    "private_ip": None,  # Not available in Simple Profile
+                    "allocation_id": None,  # Not available in Simple Profile
+                    "id": None,  # Not available in Simple Profile
+                    "address": "network_address",  # Maps to Network address attribute
+                    "public_dns": None,  # Not available in Simple Profile
+                    "private_dns": None,  # Not available in Simple Profile
+                },
+            },
+            "aws_nat_gateway": {
+                "tosca_node_type": "Network",
+                "attribute_mappings": {
+                    # Maps to Network address-related attribute
+                    "public_ip": "network_address",
+                    "private_ip": None,  # Not available in Simple Profile
+                    "network_interface_id": None,  # Not available in Simple Profile
+                    "id": None,  # Not available in Simple Profile
+                },
+            },
             # Add more resource types as needed
         }
 

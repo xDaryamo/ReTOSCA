@@ -3,6 +3,7 @@
 import json
 import logging
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,10 @@ class TerraformParser(BaseSourceFileParser):
         try:
             # Change to the Terraform directory
             original_cwd = Path.cwd()
+
+            # Clean up any stale state that might reference non-existent
+            # LocalStack resources
+            self._cleanup_stale_state(terraform_dir)
 
             # Execute Terraform commands in sequence
             self._run_terraform_init(terraform_dir)
@@ -468,3 +473,52 @@ class TerraformParser(BaseSourceFileParser):
             self._logger.info("Successfully cleaned up Terraform state")
         except Exception as e:
             self._logger.warning(f"Cleanup failed, manual cleanup may be required: {e}")
+
+    def _cleanup_stale_state(self, terraform_dir: Path) -> None:
+        """
+        Clean up stale Terraform state that might reference non-existent
+        LocalStack resources.
+
+        This is necessary because LocalStack doesn't persist state between
+        restarts, but Terraform state files do persist and can reference
+        resources that no longer exist.
+
+        Args:
+            terraform_dir: Directory containing Terraform files
+        """
+        state_file = terraform_dir / "terraform.tfstate"
+        backup_file = terraform_dir / "terraform.tfstate.backup"
+
+        if state_file.exists():
+            self._logger.info(
+                "Found existing Terraform state, checking for stale references..."
+            )
+
+            # Try to validate state by doing a refresh
+            try:
+                cmd = ["tflocal", "refresh"]
+                self._run_command(cmd, terraform_dir, capture_output=True)
+                self._logger.debug("State refresh successful, no cleanup needed")
+                return
+            except subprocess.CalledProcessError:
+                # If refresh fails, it's likely due to stale state
+                self._logger.warning(
+                    "State refresh failed, likely due to LocalStack restart. "
+                    "Cleaning up stale state..."
+                )
+
+                # Move current state to backup
+                if state_file.exists():
+                    backup_name = f"terraform.tfstate.backup.{int(time.time())}"
+                    backup_path = terraform_dir / backup_name
+                    state_file.rename(backup_path)
+                    self._logger.info(f"Backed up stale state to: {backup_name}")
+
+                # Remove backup file if it exists
+                if backup_file.exists():
+                    backup_file.unlink()
+                    self._logger.debug("Removed stale backup file")
+
+                self._logger.info("Stale state cleanup completed")
+        else:
+            self._logger.debug("No existing state file found, no cleanup needed")

@@ -108,20 +108,18 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
         """Extract subnet, gateway, and route table references from configuration.
 
         Args:
-            resource_data: The resource data from Terraform plan
+            resource_data: The resource data from Terraform plan/state
             context: TerraformMappingContext containing parsed data
 
         Returns:
             Tuple of (subnet_address, gateway_address, route_table_address)
         """
-        # Extract all Terraform references using context
-        terraform_refs = context.extract_terraform_references(resource_data)
-
         subnet_address = None
         gateway_address = None
         route_table_address = None
 
-        # Process each reference to find subnet, gateway, and route table
+        # First try to extract from Terraform references (plan JSON)
+        terraform_refs = context.extract_terraform_references(resource_data)
         for prop_name, target_ref, _relationship_type in terraform_refs:
             if "." in target_ref:
                 target_resource_type = target_ref.split(".", 1)[0]
@@ -146,6 +144,42 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
                 ):
                     route_table_address = target_ref
 
+        # If no references found from configuration, try to resolve from values
+        # (state JSON)
+        if not subnet_address and not gateway_address and not route_table_address:
+            values = resource_data.get("values", {})
+            if values:
+                # Try to find resources by their AWS IDs
+                subnet_id = values.get("subnet_id")
+                gateway_id = values.get("gateway_id")
+                route_table_id = values.get("route_table_id")
+
+                if subnet_id:
+                    subnet_address = self._find_terraform_address_by_aws_id(
+                        context, subnet_id, "aws_subnet"
+                    )
+
+                if gateway_id:
+                    # Determine gateway type and find address
+                    gateway_types = [
+                        "aws_internet_gateway",
+                        "aws_egress_only_internet_gateway",
+                        "aws_vpn_gateway",
+                        "aws_nat_gateway",
+                    ]
+                    for gw_type in gateway_types:
+                        gw_address = self._find_terraform_address_by_aws_id(
+                            context, gateway_id, gw_type
+                        )
+                        if gw_address:
+                            gateway_address = gw_address
+                            break
+
+                if route_table_id:
+                    route_table_address = self._find_terraform_address_by_aws_id(
+                        context, route_table_id, "aws_route_table"
+                    )
+
         logger.debug(
             "Extracted references - Subnet: %s, Gateway: %s, Route Table: %s",
             subnet_address,
@@ -154,6 +188,51 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
         )
 
         return subnet_address, gateway_address, route_table_address
+
+    def _find_terraform_address_by_aws_id(
+        self,
+        context: "TerraformMappingContext",
+        aws_resource_id: str,
+        resource_type: str,
+    ) -> str | None:
+        """Find Terraform address by AWS resource ID.
+
+        Args:
+            context: TerraformMappingContext containing parsed data
+            aws_resource_id: AWS resource ID (e.g., 'subnet-123abc')
+            resource_type: Terraform resource type (e.g., 'aws_subnet')
+
+        Returns:
+            Terraform address (e.g., 'aws_subnet.public') or None if not found
+        """
+        # Look in state data for resources with matching AWS ID
+        state_data = context.parsed_data.get("state", {})
+        values = state_data.get("values", {})
+        if values:
+            root_module = values.get("root_module", {})
+            resources = root_module.get("resources", [])
+
+            for resource in resources:
+                if (
+                    resource.get("type") == resource_type
+                    and resource.get("values", {}).get("id") == aws_resource_id
+                ):
+                    return resource.get("address")
+
+        # Also check in planned_values (for plan JSON)
+        planned_values = context.parsed_data.get("planned_values", {})
+        if planned_values:
+            root_module = planned_values.get("root_module", {})
+            resources = root_module.get("resources", [])
+
+            for resource in resources:
+                if (
+                    resource.get("type") == resource_type
+                    and resource.get("values", {}).get("id") == aws_resource_id
+                ):
+                    return resource.get("address")
+
+        return None
 
     def _process_subnet_association(
         self,

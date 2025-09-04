@@ -88,7 +88,11 @@ class TerraformMapper(BaseResourceMapper):
         association_resources = []
 
         for resource_name, resource_type, resource_data in resources:
-            association_types = ["aws_route_table_association", "aws_volume_attachment"]
+            association_types = [
+                "aws_route_table_association",
+                "aws_volume_attachment",
+                "aws_route",
+            ]
             if resource_type in association_types:
                 association_resources.append(
                     (resource_name, resource_type, resource_data)
