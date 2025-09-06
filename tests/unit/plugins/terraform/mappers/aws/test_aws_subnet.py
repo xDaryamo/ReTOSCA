@@ -20,7 +20,7 @@ class FakeRequirementBuilder:
         self._sink = sink
         self._node_name = node_name
         self._req_name = req_name
-        self._req = {}
+        self._req: dict[str, Any] = {}
 
     def to_node(self, target: str) -> FakeRequirementBuilder:
         self._req["node"] = target
@@ -88,9 +88,6 @@ class FakeBuilder:
         return FakeNodeBuilder(name, node_type, self.nodes)
 
 
-# --------------------------- Tests ---------------------------
-
-
 class TestCanMap:
     def test_can_map_true_for_subnet(self) -> None:
         m = AWSSubnetMapper()
@@ -155,7 +152,7 @@ class TestMapResource:
                 return "aws_subnet_subnet_1_0"
 
         context = FakeContext()
-        m.map_resource(res_name, res_type, data, b, context)
+        m.map_resource(res_name, res_type, data, b, context)  # type: ignore[arg-type]
 
         # Node name must be normalized by BaseResourceMapper
         node_name = "aws_subnet_subnet_1_0"
@@ -188,7 +185,7 @@ class TestMapResource:
         # One dependency requirement to generated VPC node name
         reqs = node["requirements"]
         assert len(reqs) == 1
-        dep = reqs[0]["vpc_id"]
+        dep = reqs[0]["dependency"]
         assert dep["relationship"] == "tosca.relationships.DependsOn"
         assert dep["node"] == "aws_vpc_main"
 
@@ -198,7 +195,7 @@ class TestMapResource:
         caplog.set_level(logging.WARNING)
         m = AWSSubnetMapper()
         b = FakeBuilder()
-        m.map_resource("aws_subnet.empty", "aws_subnet", {}, b)
+        m.map_resource("aws_subnet.empty", "aws_subnet", {}, b)  # type: ignore[arg-type]
         assert b.nodes == {}
         assert any("has no 'values' section" in r.message for r in caplog.records)
 
@@ -215,7 +212,7 @@ class TestMapResource:
             }
         }
         # Call without context
-        m.map_resource("aws_subnet.other", "aws_subnet", data, b, None)
+        m.map_resource("aws_subnet.other", "aws_subnet", data, b, None)  # type: ignore[arg-type]
 
         node_name = "aws_subnet_other"
         assert node_name in b.nodes
@@ -241,7 +238,7 @@ class TestMapResource:
                 "tags": {"env": "dev"},
             }
         }
-        m.map_resource("aws_subnet.azonly", "aws_subnet", data, b)
+        m.map_resource("aws_subnet.azonly", "aws_subnet", data, b)  # type: ignore[arg-type]
         node = b.nodes["aws_subnet_azonly"]
         # network_name derived from AZ since no 'Name' tag
         assert node["properties"]["network_name"] == "subnet-eu-west-1c"

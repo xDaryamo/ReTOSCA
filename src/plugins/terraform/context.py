@@ -100,6 +100,11 @@ class TerraformMappingContext:
 
         # Approach 1: Extract from configuration (terraform plan JSON)
         configuration = self.parsed_data.get("configuration", {})
+        if not configuration:
+            # Try to get configuration from plan sub-object
+            plan_data = self.parsed_data.get("plan", {})
+            configuration = plan_data.get("configuration", {})
+
         if configuration:
             references.extend(
                 self._extract_from_configuration(resource_address, configuration)
@@ -581,7 +586,7 @@ class TerraformMappingContext:
             return False
 
         # If both have indices, they must match
-        if ref_components["index"] is not None and res_components["index"] is not None:
+        if ref_components["index"] and res_components["index"]:
             return ref_components["index"] == res_components["index"]
 
         # If reference has no index but resource does, it could be a match
@@ -672,7 +677,7 @@ class TerraformMappingContext:
         )
 
         # If source has an index but reference doesn't, try to apply the same index
-        if source_components["index"] is not None and ref_components["index"] is None:
+        if source_components["index"] and not ref_components["index"]:
             # Try to find the target resource with the same index
             indexed_ref = f"{terraform_ref}[{source_components['index']}]"
 

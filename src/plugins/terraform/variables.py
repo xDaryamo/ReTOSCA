@@ -318,16 +318,18 @@ class OutputExtractor:
         # First try planned_values from plan data
         plan_data = parsed_data.get("plan", {})
         planned_values = plan_data.get("planned_values", {})
-        if "outputs" in planned_values:
-            output_data = planned_values["outputs"].get(output_name, {})
+        root_module_planned = planned_values.get("root_module", {})
+        if "outputs" in root_module_planned:
+            output_data = root_module_planned["outputs"].get(output_name, {})
             if "value" in output_data:
                 return output_data["value"]
 
         # Then try state data
         state_data = parsed_data.get("state", {})
         values = state_data.get("values", {})
-        if "outputs" in values:
-            output_data = values["outputs"].get(output_name, {})
+        root_module_state = values.get("root_module", {})
+        if "outputs" in root_module_state:
+            output_data = root_module_state["outputs"].get(output_name, {})
             if "value" in output_data:
                 return output_data["value"]
 

@@ -425,23 +425,29 @@ class TerraformMapper(BaseResourceMapper):
         """
         self._logger.info("Starting extraction of resources from Terraform JSON.")
 
-        # Try to find resources in either planned_values (for plan) or values (for
-        # state)
+        # Try to find resources in either values (for state) or planned_values
+        # (for plan). Priority: state first (has resolved values), then plan
+        # (has references)
         root_module = None
 
-        # Check for planned state (from plan)
-        planned_values = parsed_data.get("planned_values")
-        if planned_values:
-            root_module = planned_values.get("root_module")
-            self._logger.debug("Found 'planned_values' structure (plan JSON)")
+        # Check for applied state (from structured state data) - PRIORITY
+        state_data = parsed_data.get("state", {})
+        values = state_data.get("values", {})
+        if values:
+            root_module = values.get("root_module")
+            self._logger.debug(
+                "Found 'values' structure (state JSON) - using resolved values"
+            )
 
-        # Check for applied state (from structured state data)
+        # Check for planned state (from plan) - FALLBACK
         if not root_module:
-            state_data = parsed_data.get("state", {})
-            values = state_data.get("values", {})
-            if values:
-                root_module = values.get("root_module")
-                self._logger.debug("Found 'values' structure (state JSON)")
+            planned_values = parsed_data.get("planned_values")
+            if planned_values:
+                root_module = planned_values.get("root_module")
+                self._logger.debug(
+                    "Found 'planned_values' structure (plan JSON) - "
+                    "using planned values"
+                )
 
         if not root_module:
             self._logger.warning(

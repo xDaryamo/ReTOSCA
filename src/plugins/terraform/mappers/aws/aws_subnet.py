@@ -244,8 +244,9 @@ class AWSSubnetMapper(SingleResourceMapper):
                 target_node_name = target_ref
 
                 # Add requirement with the property name as the requirement name
+                # Map vpc_id to dependency for cleaner TOSCA representation
                 requirement_name = (
-                    prop_name if prop_name not in ["dependency"] else "dependency"
+                    "dependency" if prop_name in ["dependency", "vpc_id"] else prop_name
                 )
 
                 (

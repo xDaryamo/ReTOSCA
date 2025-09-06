@@ -171,6 +171,34 @@ class TerraformOrchestrator(BaseOrchestrator):
             AWSVPCIpv4CidrBlockAssociationMapper(),
         )
 
+        # Register the mapper for AWS ElastiCache Subnet Group
+        from .mappers.aws.aws_elasticache_subnet_group import (
+            AWSElastiCacheSubnetGroupMapper,
+        )
+
+        self._mapper.register_mapper(
+            "aws_elasticache_subnet_group", AWSElastiCacheSubnetGroupMapper()
+        )
+
+        # Register the mapper for AWS Route53 Hosted Zone
+        from .mappers.aws.aws_route53_zone import AWSRoute53ZoneMapper
+
+        self._mapper.register_mapper("aws_route53_zone", AWSRoute53ZoneMapper())
+
+        # Register the mapper for AWS Route53 Record
+        from .mappers.aws.aws_route53_record import AWSRoute53RecordMapper
+
+        self._mapper.register_mapper("aws_route53_record", AWSRoute53RecordMapper())
+
+        # Register the mapper for AWS ElastiCache Replication Group
+        from .mappers.aws.aws_elasticache_replication_group import (
+            AWSElastiCacheReplicationGroupMapper,
+        )
+
+        self._mapper.register_mapper(
+            "aws_elasticache_replication_group", AWSElastiCacheReplicationGroupMapper()
+        )
+
         self._logger.info("Registration completed.")
 
     def find_source_files(self, source_path: Path) -> list[Path]:
