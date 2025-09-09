@@ -1,4 +1,4 @@
-resource "aws_instance" "example" {
+resource "aws_instance" "server" {
   ami           = "ami-12345678"
   instance_type = "t3.micro"
 
