@@ -243,11 +243,9 @@ class AWSSubnetMapper(SingleResourceMapper):
                 # target_ref is now already resolved to TOSCA node name by context
                 target_node_name = target_ref
 
-                # Add requirement with the property name as the requirement name
-                # Map vpc_id to dependency for cleaner TOSCA representation
-                requirement_name = (
-                    "dependency" if prop_name in ["dependency", "vpc_id"] else prop_name
-                )
+                # Add requirement with standardized dependency name
+                # Map all AWS-specific property names to standard TOSCA dependency
+                requirement_name = "dependency"
 
                 (
                     subnet_node.add_requirement(requirement_name)

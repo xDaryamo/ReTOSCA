@@ -171,7 +171,7 @@ class TestMapResource:
         # Dependency requirement to VPC
         reqs = node["requirements"]
         assert len(reqs) == 1
-        dep = reqs[0]["vpc_id"]
+        dep = reqs[0]["dependency"]
         assert dep["node"] == "aws_vpc_main"
         assert dep["relationship"] == "DependsOn"
 
@@ -284,7 +284,7 @@ class TestMapResource:
         # Dependency requirement to VPC
         reqs = node["requirements"]
         assert len(reqs) == 1
-        dep = reqs[0]["vpc_id"]
+        dep = reqs[0]["dependency"]
         assert dep["node"] == "aws_vpc_main"
         assert dep["relationship"] == "DependsOn"
 

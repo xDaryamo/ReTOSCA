@@ -385,6 +385,9 @@ class AWSInstanceMapper(SingleResourceMapper):
         else:
             metadata_values = resource_data.get("values", {})
 
+        # Add endpoint capabilities for services running on the instance
+        self._add_endpoint_capabilities(compute_node, values, metadata_values, context)
+
         # Build comprehensive metadata with Terraform and AWS information
         metadata: dict[str, Any] = {}
 
@@ -466,11 +469,21 @@ class AWSInstanceMapper(SingleResourceMapper):
         # Add all collected metadata to the node
         compute_node.with_metadata(metadata)
 
-        # Add dependencies using injected context
+        # Add dependencies using injected context with filtering
         if context:
-            terraform_refs = context.extract_terraform_references(resource_data)
+            # Create dependency filter to exclude AMI references
+            from src.plugins.terraform.context import DependencyFilter
+
+            dependency_filter = DependencyFilter(
+                exclude_properties={"ami", "source_ami", "image_id"}
+            )
+
+            terraform_refs = context.extract_filtered_terraform_references(
+                resource_data, dependency_filter
+            )
             logger.debug(
-                f"Found {len(terraform_refs)} terraform references for {resource_name}"
+                f"Found {len(terraform_refs)} terraform references for "
+                f"{resource_name} (AMI references filtered out)"
             )
 
             for prop_name, target_ref, relationship_type in terraform_refs:
@@ -597,7 +610,287 @@ class AWSInstanceMapper(SingleResourceMapper):
                 os_capability.with_property(prop_name, prop_value)
             os_capability.and_node()
 
-        # Do not add empty capabilities (endpoint, scalable, binding)
+        # Do not add empty capabilities (scalable, binding)
+
+    def _add_endpoint_capabilities(
+        self,
+        compute_node,
+        values: dict[str, Any],
+        metadata_values: dict[str, Any],
+        context: "TerraformMappingContext | None" = None,
+    ) -> None:
+        """Add endpoint capabilities for services running on the instance.
+
+        Args:
+            compute_node: The TOSCA compute node to enhance
+            values: Instance configuration values (resolved for properties)
+            metadata_values: Instance configuration values (resolved for metadata)
+            context: TerraformMappingContext for additional analysis
+        """
+        # Detect service ports from various sources
+        service_ports = self._detect_service_ports(values, metadata_values, context)
+
+        # Create endpoint capabilities for each detected service port
+        for port_info in service_ports:
+            port = port_info["port"]
+            protocol = port_info.get("protocol", "http")
+            service_name = port_info.get("service_name", f"service-{port}")
+
+            logger.debug(
+                "Adding endpoint capability for service '%s' on port %d (%s)",
+                service_name,
+                port,
+                protocol,
+            )
+
+            # Create TOSCA-compliant endpoint capability name
+            if port == 22:
+                endpoint_name = "admin_endpoint"
+            else:
+                endpoint_name = "endpoint"
+
+            (
+                compute_node.add_capability(endpoint_name)
+                .with_property("protocol", protocol)
+                .with_property("port", port)
+                .with_property("secure", protocol == "https")
+                .and_node()
+            )
+
+            logger.info(
+                "Added endpoint capability '%s' for port %d on instance",
+                endpoint_name,
+                port,
+            )
+
+    def _detect_service_ports(
+        self,
+        values: dict[str, Any],
+        metadata_values: dict[str, Any],
+        context: "TerraformMappingContext | None" = None,
+    ) -> list[dict[str, Any]]:
+        """Detect service ports from user_data, security groups, and
+        target group attachments.
+
+        Args:
+            values: Instance configuration values (resolved for properties)
+            metadata_values: Instance configuration values (resolved for metadata)
+            context: TerraformMappingContext for additional analysis
+
+        Returns:
+            List of dictionaries with port information
+        """
+        detected_ports = []
+
+        # 1. Analyze user_data for service ports
+        user_data = metadata_values.get("user_data") or values.get("user_data")
+        if user_data:
+            user_data_ports = self._extract_ports_from_user_data(user_data)
+            detected_ports.extend(user_data_ports)
+
+        # 2. Analyze security group rules (if available via context)
+        if context:
+            sg_ports = self._extract_ports_from_security_groups(values, context)
+            detected_ports.extend(sg_ports)
+
+        # 3. Analyze target group attachments (if available via context)
+        if context:
+            tg_ports = self._extract_ports_from_target_group_attachments(
+                context, values
+            )
+            detected_ports.extend(tg_ports)
+
+        # Remove duplicates and return
+        unique_ports = []
+        seen_ports = set()
+        for port_info in detected_ports:
+            port = port_info["port"]
+            if port not in seen_ports:
+                unique_ports.append(port_info)
+                seen_ports.add(port)
+
+        logger.debug("Detected service ports: %s", unique_ports)
+        return unique_ports
+
+    def _extract_ports_from_user_data(self, user_data: str) -> list[dict[str, Any]]:
+        """Extract service ports from EC2 user_data script.
+
+        Args:
+            user_data: User data script content
+
+        Returns:
+            List of port information dictionaries
+        """
+        ports = []
+
+        # Common patterns for port specifications in scripts
+        patterns = [
+            r"-p\s+(\d+)",  # nc -l -p 8080, netcat style
+            r"--port\s+(\d+)",  # --port 8080
+            r"port\s*=\s*(\d+)",  # port=8080
+            r":(\d+)",  # :8080 in URLs or bind addresses
+            r"listen\s+(\d+)",  # listen 8080
+            r"PORT\s*=\s*(\d+)",  # PORT=8080 environment variable
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, user_data, re.IGNORECASE)
+            for match in matches:
+                try:
+                    port = int(match)
+                    # Filter reasonable port ranges
+                    if 1024 <= port <= 65535:  # Non-privileged ports
+                        # Infer protocol based on common port conventions
+                        protocol = "http"
+                        if port == 443 or port == 8443:
+                            protocol = "https"
+                        elif port in [3306, 5432, 6379, 27017]:  # Database ports
+                            protocol = "tcp"
+
+                        service_name = f"service-{port}"
+                        # Try to infer service name from context
+                        if port == 8080:
+                            service_name = "web-service"
+                        elif port == 3000:
+                            service_name = "node-app"
+                        elif port == 8000:
+                            service_name = "django-app"
+
+                        ports.append(
+                            {
+                                "port": port,
+                                "protocol": protocol,
+                                "service_name": service_name,
+                                "source": "user_data",
+                            }
+                        )
+
+                        logger.debug(
+                            "Detected port %d from user_data (%s)", port, service_name
+                        )
+                except ValueError:
+                    continue  # Skip invalid port numbers
+
+        return ports
+
+    def _extract_ports_from_security_groups(
+        self, values: dict[str, Any], context: "TerraformMappingContext"
+    ) -> list[dict[str, Any]]:
+        """Extract service ports from security group ingress rules.
+
+        Args:
+            values: Instance configuration values
+            context: TerraformMappingContext for security group lookup
+
+        Returns:
+            List of port information dictionaries
+        """
+        ports: list[dict[str, Any]] = []
+
+        # Get security group IDs from the instance
+        security_group_ids = values.get("vpc_security_group_ids", [])
+        if not security_group_ids:
+            return ports
+
+        # Look up security groups in the parsed data
+        parsed_data = context.parsed_data
+
+        # Search in both planned_values and configuration sections
+        for data_key in ["planned_values", "configuration"]:
+            data_section = parsed_data.get(data_key, {})
+            if not data_section:
+                continue
+
+            root_module = data_section.get("root_module", {})
+            if not root_module:
+                continue
+
+            for resource in root_module.get("resources", []):
+                if resource.get("type") != "aws_security_group":
+                    continue
+
+                # Check if this security group is attached to our instance
+                sg_address = resource.get("address", "")
+                sg_values = resource.get("values", {})
+
+                # Extract ingress rules
+                if data_key == "configuration":
+                    # In configuration, ingress rules are in expressions
+                    expressions = resource.get("expressions", {})
+                    ingress_rules = expressions.get("ingress", [])
+                else:
+                    # In planned_values, ingress rules are in values
+                    ingress_rules = sg_values.get("ingress", [])
+
+                for rule in ingress_rules:
+                    if isinstance(rule, dict):
+                        from_port = rule.get("from_port")
+                        to_port = rule.get("to_port")
+                        protocol = rule.get("protocol", "tcp")
+
+                        if from_port and to_port and from_port == to_port:
+                            port = from_port if isinstance(from_port, int) else None
+                            if port and 1024 <= port <= 65535:
+                                ports.append(
+                                    {
+                                        "port": port,
+                                        "protocol": (
+                                            "http"
+                                            if protocol == "tcp"
+                                            and port in [80, 8080, 3000, 8000]
+                                            else "tcp"
+                                        ),
+                                        "service_name": f"sg-service-{port}",
+                                        "source": f"security_group_{sg_address}",
+                                    }
+                                )
+
+        return ports
+
+    def _extract_ports_from_target_group_attachments(
+        self, context: "TerraformMappingContext", instance_values: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Extract service ports from target group attachments that
+        reference this instance.
+
+        Args:
+            context: TerraformMappingContext for target group attachment lookup
+            instance_values: Instance configuration values
+
+        Returns:
+            List of port information dictionaries
+        """
+        ports: list[dict[str, Any]] = []
+
+        # This would require looking up target group attachments that
+        # reference this instance
+        # For now, we'll implement a simple version that looks for common
+        # web service ports
+        # A more complete implementation would traverse the terraform references
+
+        parsed_data = context.parsed_data
+
+        # Look for target group attachments in the configuration
+        config_section = parsed_data.get("configuration", {})
+        if config_section:
+            root_module = config_section.get("root_module", {})
+            for resource in root_module.get("resources", []):
+                if resource.get("type") == "aws_lb_target_group_attachment":
+                    expressions = resource.get("expressions", {})
+                    port_expr = expressions.get("port", {})
+                    port_value = port_expr.get("constant_value")
+
+                    if isinstance(port_value, int) and 1024 <= port_value <= 65535:
+                        ports.append(
+                            {
+                                "port": port_value,
+                                "protocol": "http",
+                                "service_name": f"target-group-service-{port_value}",
+                                "source": "target_group_attachment",
+                            }
+                        )
+
+        return ports
 
     def _calculate_actual_vcpu(
         self,

@@ -254,10 +254,9 @@ class AWSVPCMapper(SingleResourceMapper):
                 # target_ref is now already resolved to TOSCA node name by context
                 target_node_name = target_ref
 
-                # Add requirement with the property name as the requirement name
-                requirement_name = (
-                    prop_name if prop_name not in ["dependency"] else "dependency"
-                )
+                # Add requirement with standardized dependency name
+                # Map all AWS-specific property names to standard TOSCA dependency
+                requirement_name = "dependency"
 
                 (
                     network_node.add_requirement(requirement_name)

@@ -273,9 +273,9 @@ class TestHappyPathWithReferencesAndTargets:
         azs = md.get("aws_availability_zones", [])
         assert set(azs) == {"eu-west-1a", "eu-west-1b"}
 
-        # Targets include the ElastiCache replication group node name
+        # Targets include the ElastiCache replication group node name (with _dbms)
         expected_target = BaseResourceMapper.generate_tosca_node_name(
-            "aws_elasticache_replication_group.main",
+            "aws_elasticache_replication_group.main_dbms",
             "aws_elasticache_replication_group",
         )
         assert expected_target in pol.targets

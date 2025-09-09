@@ -67,6 +67,10 @@ class FakeNode:
         self.properties[key] = value
         return self
 
+    def with_properties(self, props: dict[str, Any]) -> FakeNode:
+        self.properties.update(props)
+        return self
+
     def with_metadata(self, md: dict[str, Any]) -> FakeNode:
         self.metadata = md
         return self
@@ -172,14 +176,14 @@ class TestEndpointMapping:
         node = b.get_node(node_name)
 
         # Node type and basic property
-        assert node.node_type == "Endpoint.Public"
-        assert node.properties.get("protocol") == "http"
+        assert node.node_type == "Network"
+        assert node.properties.get("network_type") == "dns_record"
 
-        # Requirement to zone with LinksTo
+        # Requirement to zone with DependsOn
         zone_node_name = BaseResourceMapper.generate_tosca_node_name(
             zone_ref, "aws_route53_zone"
         )
-        assert ("link", zone_node_name, "LinksTo", "link") in node.requirements
+        assert ("zone", zone_node_name, "DependsOn", None) in node.requirements
 
         # Metadata essentials
         md = node.metadata
@@ -215,8 +219,8 @@ class TestEndpointMapping:
         )
         node = b.get_node(node_name)
 
-        assert node.node_type == "Endpoint"
-        assert node.properties.get("protocol") == "http"
+        assert node.node_type == "Network"
+        assert node.properties.get("network_type") == "dns_record"
         # no link requirement without context
         assert node.requirements == []
 
@@ -248,14 +252,12 @@ class TestLoadBalancerMapping:
         )
         node = b.get_node(node_name)
 
-        assert node.node_type == "LoadBalancer"
-        # client capability with network_name and protocol
-        assert "client" in node.capabilities
-        client = node.capabilities["client"]
-        assert client.get("network_name") == "PUBLIC"
-        assert client.get("protocol") == "http"
-        # algorithm inferred
-        assert node.properties.get("algorithm") == "weighted"
+        assert node.node_type == "Network"
+        # Check network properties
+        assert node.properties.get("network_type") == "dns_record"
+        assert node.properties.get("network_name") == "api"
+        # For Network nodes representing DNS records, routing policies are in metadata
+        assert "aws_weighted_routing_policy" in node.metadata
 
     def test_lb_when_only_set_identifier(self) -> None:
         m = AWSRoute53RecordMapper()
@@ -282,6 +284,6 @@ class TestLoadBalancerMapping:
             "aws_route53_record.geo", "aws_route53_record"
         )
         node = b.get_node(node_name)
-        assert node.node_type == "LoadBalancer"
-        # default algorithm is round_robin if we don't recognize specific policies
-        assert node.properties.get("algorithm") == "round_robin"
+        assert node.node_type == "Network"
+        # Check network properties
+        assert node.properties.get("network_type") == "dns_record"

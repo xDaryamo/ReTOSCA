@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING, Any
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
+from src.plugins.terraform.context import DependencyFilter
+from src.plugins.terraform.exceptions import ResourceMappingError
 
 if TYPE_CHECKING:
     from src.models.v2_0.builder import ServiceTemplateBuilder
@@ -18,6 +20,52 @@ class AWSEIPMapper(SingleResourceMapper):
     dynamic cloud computing. They are mapped as Network nodes to represent
     their network-level IP addressing functionality.
     """
+
+    def _extract_metadata_fields(
+        self, metadata_values: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Extract metadata fields from AWS EIP resource values.
+
+        Args:
+            metadata_values: Dictionary of resource values to extract from
+
+        Returns:
+            Dictionary of metadata fields with aws_ prefix
+        """
+        metadata = {}
+
+        # Define fields to extract with their conditions
+        field_mappings = {
+            "domain": "aws_domain",
+            "vpc": "aws_vpc",
+            "instance": "aws_instance",
+            "network_interface": "aws_network_interface",
+            "associate_with_private_ip": "aws_associate_with_private_ip",
+            "customer_owned_ipv4_pool": "aws_customer_owned_ipv4_pool",
+            "allocation_id": "aws_allocation_id",
+            "public_ip": "aws_public_ip",
+            "private_ip": "aws_private_ip",
+            "public_dns": "aws_public_dns",
+            "private_dns": "aws_private_dns",
+            "address": "aws_address",
+            "id": "aws_id",
+        }
+
+        for source_field, metadata_key in field_mappings.items():
+            value = metadata_values.get(source_field)
+            if value is not None:
+                metadata[metadata_key] = value
+
+        # Handle special cases for tags
+        tags = metadata_values.get("tags", {})
+        if tags:
+            metadata["aws_tags"] = tags
+
+        tags_all = metadata_values.get("tags_all", {})
+        if tags_all and tags_all != tags:
+            metadata["aws_tags_all"] = tags_all
+
+        return metadata
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
         """Return True for resource type 'aws_eip'."""
@@ -67,20 +115,22 @@ class AWSEIPMapper(SingleResourceMapper):
 
         # Extract the clean name for metadata (without the type prefix)
         if "." in resource_name:
-            _, clean_name = resource_name.split(".", 1)
+            clean_name = resource_name.split(".", 1)[1]
         else:
             clean_name = resource_name
 
         # Create the Elastic IP node as a Network node
-        eip_node = builder.add_node(name=node_name, node_type="Network")
+        try:
+            eip_node = builder.add_node(name=node_name, node_type="Network")
+        except Exception as e:
+            raise ResourceMappingError(
+                f"Failed to create TOSCA Network node: {e}",
+                resource_name=resource_name,
+                resource_type=resource_type,
+                mapping_phase="node_creation",
+            ) from e
 
-        # Extract AWS EIP properties and map them to TOSCA Network properties
-        values.get("domain")
-        values.get("vpc")
-        values.get("instance")
-        values.get("network_interface")
-        values.get("associate_with_private_ip")
-        values.get("customer_owned_ipv4_pool")
+        # Extract tags for node properties
         tags = values.get("tags", {})
 
         # Map properties to TOSCA Network
@@ -89,10 +139,9 @@ class AWSEIPMapper(SingleResourceMapper):
         eip_node.with_property("ip_version", 4)  # EIPs are IPv4
 
         # Use Name tag if available, otherwise generate descriptive name
-        if tags and "Name" in tags:
-            eip_node.with_property("network_name", f"EIP-{tags['Name']}")
-        else:
-            eip_node.with_property("network_name", f"EIP-{clean_name}")
+        name_tag = tags.get("Name")
+        network_name = f"EIP-{name_tag}" if name_tag else f"EIP-{clean_name}"
+        eip_node.with_property("network_name", network_name)
 
         # Add the standard 'link' capability for Network nodes
         eip_node.add_capability("link").and_node()
@@ -119,80 +168,15 @@ class AWSEIPMapper(SingleResourceMapper):
         if provider_name:
             metadata["aws_provider"] = provider_name
 
-        # AWS EIP specific properties - use metadata_values for concrete values
-        metadata_domain = metadata_values.get("domain")
-        if metadata_domain:
-            metadata["aws_domain"] = metadata_domain
-
-        metadata_vpc = metadata_values.get("vpc")
-        if metadata_vpc is not None:  # Can be boolean
-            metadata["aws_vpc"] = metadata_vpc
-
-        metadata_instance = metadata_values.get("instance")
-        if metadata_instance:
-            metadata["aws_instance"] = metadata_instance
-
-        metadata_network_interface = metadata_values.get("network_interface")
-        if metadata_network_interface:
-            metadata["aws_network_interface"] = metadata_network_interface
-
-        metadata_private_ip = metadata_values.get("associate_with_private_ip")
-        if metadata_private_ip:
-            metadata["aws_associate_with_private_ip"] = metadata_private_ip
-
-        metadata_customer_pool = metadata_values.get("customer_owned_ipv4_pool")
-        if metadata_customer_pool:
-            metadata["aws_customer_owned_ipv4_pool"] = metadata_customer_pool
-
-        # Computed attributes
-        metadata_allocation_id = metadata_values.get("allocation_id")
-        if metadata_allocation_id:
-            metadata["aws_allocation_id"] = metadata_allocation_id
-
-        metadata_public_ip = metadata_values.get("public_ip")
-        if metadata_public_ip:
-            metadata["aws_public_ip"] = metadata_public_ip
-
-        metadata_private_ip_computed = metadata_values.get("private_ip")
-        if metadata_private_ip_computed:
-            metadata["aws_private_ip"] = metadata_private_ip_computed
-
-        metadata_public_dns = metadata_values.get("public_dns")
-        if metadata_public_dns:
-            metadata["aws_public_dns"] = metadata_public_dns
-
-        metadata_private_dns = metadata_values.get("private_dns")
-        if metadata_private_dns:
-            metadata["aws_private_dns"] = metadata_private_dns
-
-        # Address (same as public_ip but separate field)
-        metadata_address = metadata_values.get("address")
-        if metadata_address:
-            metadata["aws_address"] = metadata_address
-
-        # ID
-        metadata_id = metadata_values.get("id")
-        if metadata_id:
-            metadata["aws_id"] = metadata_id
-
-        # Tags for the EIP - use metadata values for concrete resolution
-        metadata_tags = metadata_values.get("tags", {})
-        if metadata_tags:
-            metadata["aws_tags"] = metadata_tags
-
-        # Tags_all (all tags including provider defaults)
-        metadata_tags_all = metadata_values.get("tags_all", {})
-        if metadata_tags_all and metadata_tags_all != metadata_tags:
-            metadata["aws_tags_all"] = metadata_tags_all
+        # Extract AWS EIP specific metadata using helper method
+        aws_metadata = self._extract_metadata_fields(metadata_values)
+        metadata.update(aws_metadata)
 
         # Attach collected metadata to the node
         eip_node.with_metadata(metadata)
 
         # Add dependencies using injected context with intelligent filtering
         if context:
-            # Import DependencyFilter at runtime to avoid circular dependency
-            from src.plugins.terraform.context import DependencyFilter
-
             # Create filter to exclude problematic dependencies
             dependency_filter = DependencyFilter(
                 exclude_target_types={"aws_internet_gateway", "aws_vpc"}
@@ -247,10 +231,12 @@ class AWSEIPMapper(SingleResourceMapper):
         # Debug: mapped properties - use metadata values for concrete display
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Mapped properties for '%s':", node_name)
-            logger.debug("  - Domain: %s", metadata_domain)
-            logger.debug("  - VPC: %s", metadata_vpc)
-            logger.debug("  - Public IP: %s", metadata_public_ip)
-            logger.debug("  - Allocation ID: %s", metadata_allocation_id)
-            logger.debug("  - Instance: %s", metadata_instance)
-            logger.debug("  - Network Interface: %s", metadata_network_interface)
-            logger.debug("  - Tags: %s", metadata_tags)
+            logger.debug("  - Domain: %s", aws_metadata.get("aws_domain"))
+            logger.debug("  - VPC: %s", aws_metadata.get("aws_vpc"))
+            logger.debug("  - Public IP: %s", aws_metadata.get("aws_public_ip"))
+            logger.debug("  - Allocation ID: %s", aws_metadata.get("aws_allocation_id"))
+            logger.debug("  - Instance: %s", aws_metadata.get("aws_instance"))
+            logger.debug(
+                "  - Network Interface: %s", aws_metadata.get("aws_network_interface")
+            )
+            logger.debug("  - Tags: %s", aws_metadata.get("aws_tags"))

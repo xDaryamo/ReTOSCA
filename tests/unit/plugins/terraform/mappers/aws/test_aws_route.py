@@ -1,4 +1,3 @@
-# tests/unit/plugins/terraform/mappers/aws/test_aws_route.py
 from __future__ import annotations
 
 from typing import Any
@@ -7,8 +6,6 @@ import pytest
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.plugins.terraform.mappers.aws.aws_route import AWSRouteMapper
-
-# -------------------- Fake builder / node DSL --------------------
 
 
 class FakeReq:
@@ -56,15 +53,12 @@ class FakeBuilder:
         return self.nodes[name]
 
 
-# -------------------- Dummy TerraformMappingContext --------------------
-
-
 class DummyCtx:
     """
-    - get_resolved_values: restituisce i values grezzi
-    - generate_tosca_node_name_from_address: delega a BaseResourceMapper
-    - extract_terraform_references: ritorna la lista di riferimenti finti
-    - parsed_data: usata dal fallback su state/planned_values
+    - get_resolved_values: returns the raw values
+    - generate_tosca_node_name_from_address: delegates to BaseResourceMapper
+    - extract_terraform_references: returns the list of fake references
+    - parsed_data: used by the fallback on state/planned_values
     """
 
     def __init__(
@@ -89,9 +83,6 @@ class DummyCtx:
         self, resource_data: dict[str, Any]
     ) -> list[tuple[str, str, str]]:
         return list(self._refs)
-
-
-# ================================== TESTS ==================================
 
 
 class TestCanMap:

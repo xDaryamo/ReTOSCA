@@ -191,10 +191,9 @@ class AWSInternetGatewayMapper(SingleResourceMapper):
                 # target_ref is now already resolved to TOSCA node name by context
                 target_node_name = target_ref
 
-                # Add requirement with the property name as the requirement name
-                requirement_name = (
-                    prop_name if prop_name not in ["dependency"] else "dependency"
-                )
+                # Always use "dependency" as the requirement name for
+                # TOSCA 2.0 compatibility
+                requirement_name = "dependency"
 
                 (
                     igw_node.add_requirement(requirement_name)

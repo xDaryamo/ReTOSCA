@@ -202,7 +202,7 @@ class TestMapResourceHappyPath:
         reqs = node["requirements"]
         assert len(reqs) == 1
         # Extract requirement details
-        vpc_req = reqs[0]["vpc_id"]
+        vpc_req = reqs[0]["dependency"]
         assert vpc_req["node"] == "aws_vpc_main"
         assert vpc_req["relationship"] == "DependsOn"
 

@@ -707,3 +707,219 @@ class TerraformMappingContext:
 
         # No special array handling needed, use standard resolution
         return self.resolve_terraform_reference_to_tosca_node(terraform_ref)
+
+    def find_resources_by_type(self, resource_type: str) -> list[dict[str, Any]]:
+        """Find all resources of a specific type in the parsed data.
+
+        Args:
+            resource_type: The Terraform resource type to search for
+                (e.g., 'aws_lb_target_group')
+
+        Returns:
+            List of resource dictionaries matching the type
+        """
+        resources: list[dict[str, Any]] = []
+
+        try:
+            # Search in multiple data sections
+            for data_key in ["planned_values", "configuration", "state"]:
+                data_section = self.parsed_data.get(data_key, {})
+                if not data_section:
+                    continue
+
+                if data_key == "state":
+                    values = data_section.get("values", {})
+                    root_module = values.get("root_module", {}) if values else {}
+                else:
+                    root_module = data_section.get("root_module", {})
+
+                if root_module:
+                    self._collect_resources_by_type_from_module(
+                        root_module, resource_type, resources
+                    )
+
+        except Exception:
+            # Logger import is at module level, not available here
+            # Silently handle the error - the caller can log if needed
+            pass
+
+        # Remove duplicates based on address
+        unique_resources = {}
+        for resource in resources:
+            address = resource.get("address", "")
+            if address and address not in unique_resources:
+                unique_resources[address] = resource
+
+        return list(unique_resources.values())
+
+    def _collect_resources_by_type_from_module(
+        self, module_data: dict, resource_type: str, resources: list[dict[str, Any]]
+    ) -> None:
+        """Recursively collect resources of a specific type from a module."""
+        for resource in module_data.get("resources", []):
+            if resource.get("type") == resource_type:
+                resources.append(resource)
+
+        # Process child modules
+        for child_module in module_data.get("child_modules", []):
+            self._collect_resources_by_type_from_module(
+                child_module, resource_type, resources
+            )
+
+    def find_resources_referencing(
+        self, target_resource_ref: str
+    ) -> list[dict[str, Any]]:
+        """Find all resources that reference the specified target resource.
+
+        Args:
+            target_resource_ref: The resource reference to search for
+                (e.g., 'aws_vpc.main')
+
+        Returns:
+            List of resource dictionaries that reference the target
+        """
+        referencing_resources: list[dict[str, Any]] = []
+
+        try:
+            # Search in configuration section primarily
+            configuration = self.parsed_data.get("configuration", {})
+            if not configuration:
+                plan_data = self.parsed_data.get("plan", {})
+                configuration = plan_data.get("configuration", {})
+
+            if configuration:
+                root_module = configuration.get("root_module", {})
+                if root_module:
+                    self._find_references_in_module(
+                        root_module, target_resource_ref, referencing_resources
+                    )
+
+        except Exception:
+            pass
+
+        return referencing_resources
+
+    def _find_references_in_module(
+        self,
+        module_data: dict,
+        target_ref: str,
+        referencing_resources: list[dict[str, Any]],
+    ) -> None:
+        """Find resources that reference the target in a specific module."""
+        for resource in module_data.get("resources", []):
+            if self._resource_references_target(resource, target_ref):
+                referencing_resources.append(resource)
+
+        # Process child modules
+        for child_module in module_data.get("child_modules", []):
+            self._find_references_in_module(
+                child_module, target_ref, referencing_resources
+            )
+
+    def _resource_references_target(
+        self, resource: dict[str, Any], target_ref: str
+    ) -> bool:
+        """Check if a resource references the target resource."""
+        expressions = resource.get("expressions", {})
+        if not expressions:
+            return False
+
+        # Recursively search through all expressions for references
+        return self._search_expressions_for_reference(expressions, target_ref)
+
+    def _search_expressions_for_reference(
+        self, expressions: dict | list | Any, target_ref: str
+    ) -> bool:
+        """Recursively search expressions for a specific reference."""
+        if isinstance(expressions, dict):
+            # Check for references array
+            if "references" in expressions:
+                references = expressions["references"]
+                if isinstance(references, list):
+                    for ref in references:
+                        if str(ref) == target_ref or str(ref).startswith(
+                            target_ref + "."
+                        ):
+                            return True
+
+            # Recursively search all values
+            for value in expressions.values():
+                if self._search_expressions_for_reference(value, target_ref):
+                    return True
+
+        elif isinstance(expressions, list):
+            for item in expressions:
+                if self._search_expressions_for_reference(item, target_ref):
+                    return True
+
+        return False
+
+    def get_resource_vpc_context(self, resource_address: str) -> str | None:
+        """Get the VPC context for a resource (simplified heuristic).
+
+        Args:
+            resource_address: The resource address to get VPC context for
+
+        Returns:
+            VPC identifier or None if not determinable
+        """
+        try:
+            # Find the resource in parsed data
+            for data_key in ["planned_values", "configuration", "state"]:
+                data_section = self.parsed_data.get(data_key, {})
+                if not data_section:
+                    continue
+
+                if data_key == "state":
+                    values = data_section.get("values", {})
+                    root_module = values.get("root_module", {}) if values else {}
+                else:
+                    root_module = data_section.get("root_module", {})
+
+                if root_module:
+                    vpc_context = self._get_vpc_context_from_module(
+                        root_module, data_key, resource_address
+                    )
+                    if vpc_context:
+                        return vpc_context
+
+        except Exception:
+            pass
+
+        return None
+
+    def _get_vpc_context_from_module(
+        self, module_data: dict, data_section: str, resource_address: str
+    ) -> str | None:
+        """Get VPC context from a specific module."""
+        for resource in module_data.get("resources", []):
+            if resource.get("address") != resource_address:
+                continue
+
+            if data_section == "configuration":
+                expressions = resource.get("expressions", {})
+                # Look for VPC-related references
+                for prop_name in ["vpc_id", "subnet_id", "subnet_ids", "subnets"]:
+                    if prop_name in expressions:
+                        prop_expr = expressions[prop_name]
+                        if isinstance(prop_expr, dict):
+                            refs = prop_expr.get("references", [])
+                            for ref in refs:
+                                if "aws_vpc" in str(ref) or "aws_subnet" in str(ref):
+                                    return str(ref)
+            else:
+                values = resource.get("values", {})
+                # Look for direct VPC/subnet values
+                for prop_name in ["vpc_id", "subnet_id"]:
+                    if prop_name in values and values[prop_name]:
+                        return values[prop_name]
+
+        # Check child modules
+        for child_module in module_data.get("child_modules", []):
+            vpc_context = self._get_vpc_context_from_module(
+                child_module, data_section, resource_address
+            )
+            if vpc_context:
+                return vpc_context
+
+        return None

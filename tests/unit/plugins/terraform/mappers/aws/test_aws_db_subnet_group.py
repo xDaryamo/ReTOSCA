@@ -262,11 +262,11 @@ class TestHappyPathWithContext:
         # Availability zones list derived from subnet_details
         assert sorted(md["aws_availability_zones"]) == ["eu-west-1a", "eu-west-1b"]
 
-        # Targets include DBMS and Database nodes for the instance referencing
-        # this subnet group
+        # Targets include only DBMS nodes for the instance referencing this
+        # subnet group. Database nodes are hosted on DBMS and inherit
+        # placement through the hosting relationship
         assert set(policy.targets) == {
             "aws_db_instance_db1_dbms",
-            "aws_db_instance_db1_database",
         }
 
 

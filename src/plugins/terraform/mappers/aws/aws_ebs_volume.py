@@ -16,8 +16,206 @@ class AWSEBSVolumeMapper(SingleResourceMapper):
     tosca.nodes.Storage.BlockStorage node.
     """
 
+    # TOSCA property mappings
+    TOSCA_PROPERTY_MAPPINGS = {
+        "size": "size",
+        "id": "volume_id",
+        "snapshot_id": "snapshot_id",
+    }
+
+    # AWS metadata field mappings
+    METADATA_FIELD_MAPPINGS = {
+        "availability_zone": "aws_availability_zone",
+        "region": "aws_region",
+        "encrypted": "aws_encrypted",
+        "kms_key_id": "aws_kms_key_id",
+        "type": "aws_volume_type",
+        "iops": "aws_iops",
+        "throughput": "aws_throughput",
+        "multi_attach_enabled": "aws_multi_attach_enabled",
+        "outpost_arn": "aws_outpost_arn",
+        "final_snapshot": "aws_final_snapshot",
+        "volume_initialization_rate": "aws_volume_initialization_rate",
+        "arn": "aws_arn",
+        "create_time": "aws_create_time",
+    }
+
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
         return resource_type == "aws_ebs_volume"
+
+    def _get_resolved_values(
+        self,
+        resource_data: dict[str, Any],
+        context: "TerraformMappingContext | None",
+        value_type: str = "property",
+    ) -> dict[str, Any]:
+        """Get resolved values from context or fallback to resource data."""
+        if context:
+            return context.get_resolved_values(resource_data, value_type)
+        return resource_data.get("values", {})
+
+    def _validate_resource_data(
+        self, values: dict[str, Any], resource_name: str
+    ) -> bool:
+        """Validate resource data and return False if should skip mapping."""
+        if not values:
+            logger.warning(
+                f"Resource '{resource_name}' has no 'values' section. Skipping."
+            )
+            return False
+        return True
+
+    def _extract_clean_name(self, resource_name: str) -> str:
+        """Extract clean name from resource identifier."""
+        if "." in resource_name:
+            _, clean_name = resource_name.split(".", 1)
+            return clean_name
+        return resource_name
+
+    def _set_tosca_properties(self, volume_node, values: dict[str, Any]) -> None:
+        """Set standard TOSCA properties on the volume node."""
+        for aws_field, tosca_property in self.TOSCA_PROPERTY_MAPPINGS.items():
+            value = values.get(aws_field)
+            if value:
+                if aws_field == "size":
+                    # Convert from GiB to GB for TOSCA compliance
+                    volume_node.with_property(tosca_property, f"{value} GB")
+                else:
+                    volume_node.with_property(tosca_property, value)
+
+    def _build_metadata(
+        self,
+        resource_data: dict[str, Any],
+        resource_type: str,
+        clean_name: str,
+        context: "TerraformMappingContext | None",
+    ) -> dict[str, Any]:
+        """Build metadata dictionary for the volume node."""
+        metadata_values = self._get_resolved_values(resource_data, context, "metadata")
+
+        metadata: dict[str, Any] = {
+            "original_resource_type": resource_type,
+            "original_resource_name": clean_name,
+        }
+
+        # Add provider information
+        provider_name = resource_data.get("provider_name")
+        if provider_name:
+            metadata["aws_provider"] = provider_name
+
+        # Map AWS-specific metadata fields
+        for aws_field, metadata_key in self.METADATA_FIELD_MAPPINGS.items():
+            value = metadata_values.get(aws_field)
+            if value is not None:
+                metadata[metadata_key] = value
+
+        # Handle tags separately as they require special processing
+        self._add_tags_to_metadata(metadata, metadata_values)
+
+        return metadata
+
+    def _add_tags_to_metadata(
+        self, metadata: dict[str, Any], metadata_values: dict[str, Any]
+    ) -> None:
+        """Add tags to metadata with special handling for tags vs tags_all."""
+        tags = metadata_values.get("tags", {})
+        if tags:
+            metadata["aws_tags"] = tags
+
+        tags_all = metadata_values.get("tags_all", {})
+        if tags_all and tags_all != tags:
+            metadata["aws_tags_all"] = tags_all
+
+    def _process_dependencies(
+        self,
+        volume_node,
+        resource_data: dict[str, Any],
+        context: "TerraformMappingContext | None",
+        node_name: str,
+        resource_name: str,
+    ) -> None:
+        """Process Terraform dependencies and add them as requirements."""
+        if not context:
+            logger.warning(
+                "No context provided to detect dependencies for resource '%s'",
+                resource_name,
+            )
+            return
+
+        terraform_refs = context.extract_terraform_references(resource_data)
+        logger.debug(
+            f"Found {len(terraform_refs)} terraform references for {resource_name}"
+        )
+
+        for prop_name, target_ref, relationship_type in terraform_refs:
+            self._process_single_dependency(
+                volume_node, prop_name, target_ref, relationship_type, node_name
+            )
+
+    def _process_single_dependency(
+        self,
+        volume_node,
+        prop_name: str,
+        target_ref: str,
+        relationship_type: str,
+        node_name: str,
+    ) -> None:
+        """Process a single terraform dependency reference."""
+        logger.debug(
+            "Processing reference: %s -> %s (%s)",
+            prop_name,
+            target_ref,
+            relationship_type,
+        )
+
+        if "." not in target_ref:
+            logger.warning(f"Invalid target reference format: {target_ref}")
+            return
+
+        # target_ref is like "aws_kms_key.main"
+        target_resource_type = target_ref.split(".", 1)[0]
+        target_node_name = BaseResourceMapper.generate_tosca_node_name(
+            target_ref, target_resource_type
+        )
+
+        # Add requirement with the property name as the requirement name
+        requirement_name = prop_name if prop_name != "dependency" else "dependency"
+
+        (
+            volume_node.add_requirement(requirement_name)
+            .to_node(target_node_name)
+            .with_relationship(relationship_type)
+            .and_node()
+        )
+
+        logger.info(
+            "Added %s requirement '%s' to '%s' with relationship %s",
+            requirement_name,
+            target_node_name,
+            node_name,
+            relationship_type,
+        )
+
+    def _log_mapped_properties(
+        self,
+        node_name: str,
+        values: dict[str, Any],
+        metadata_values: dict[str, Any],
+    ) -> None:
+        """Log mapped properties for debugging purposes."""
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        logger.debug(f"Mapped properties for '{node_name}':")
+        logger.debug(f"  - Size: {values.get('size')} GiB")
+        logger.debug(
+            f"  - Availability Zone: {metadata_values.get('availability_zone')}"
+        )
+        logger.debug(f"  - Volume Type: {metadata_values.get('type')}")
+        logger.debug(f"  - Encrypted: {metadata_values.get('encrypted')}")
+        logger.debug(f"  - IOPS: {metadata_values.get('iops')}")
+        logger.debug(f"  - Throughput: {metadata_values.get('throughput')}")
+        logger.debug(f"  - Tags: {metadata_values.get('tags', {})}")
 
     def map_resource(
         self,
@@ -27,202 +225,54 @@ class AWSEBSVolumeMapper(SingleResourceMapper):
         builder: "ServiceTemplateBuilder",
         context: "TerraformMappingContext | None" = None,
     ) -> None:
+        """Map AWS EBS Volume to TOSCA Storage.BlockStorage node.
+
+        Args:
+            resource_name: Terraform resource identifier (e.g., "aws_ebs_volume.main")
+            resource_type: Must be "aws_ebs_volume"
+            resource_data: Terraform resource configuration including 'values' section
+            builder: TOSCA service template builder for node creation
+            context: Optional context for variable resolution and dependencies
+
+        Note:
+            Silently returns if resource_data has no 'values' section,
+            logging a warning.
+        """
         logger.info(f"Mapping EBS Volume resource: '{resource_name}'")
 
-        # Get resolved values using the context for properties
-        if context:
-            values = context.get_resolved_values(resource_data, "property")
-        else:
-            # Fallback to original values if no context available
-            values = resource_data.get("values", {})
-
-        if not values:
-            logger.warning(
-                f"Resource '{resource_name}' has no 'values' section. Skipping."
-            )
+        # Get and validate resolved values
+        values = self._get_resolved_values(resource_data, context, "property")
+        if not self._validate_resource_data(values, resource_name):
             return
 
+        # Extract clean name and generate node name
+        clean_name = self._extract_clean_name(resource_name)
         node_name = BaseResourceMapper.generate_tosca_node_name(
             resource_name, resource_type
         )
-        if "." in resource_name:
-            _, clean_name = resource_name.split(".", 1)
-        else:
-            clean_name = resource_name
 
         # Create the BlockStorage node
         volume_node = builder.add_node(name=node_name, node_type="Storage.BlockStorage")
 
-        # === Standard TOSCA properties ===
+        # Set standard TOSCA properties
+        self._set_tosca_properties(volume_node, values)
 
-        # Volume size (standard TOSCA property)
-        size = values.get("size")
-        if size:
-            # Convert from GiB to GB for TOSCA compliance (string representation)
-            volume_node.with_property("size", f"{size} GB")
-
-        # Volume ID (if available, typically after creation)
-        volume_id = values.get("id")
-        if volume_id:
-            volume_node.with_property("volume_id", volume_id)
-
-        # Snapshot ID (if the volume is based on a snapshot)
-        snapshot_id = values.get("snapshot_id")
-        if snapshot_id:
-            volume_node.with_property("snapshot_id", snapshot_id)
-
-        # Get resolved values specifically for metadata (always concrete values)
-        if context:
-            metadata_values = context.get_resolved_values(resource_data, "metadata")
-        else:
-            metadata_values = resource_data.get("values", {})
-
-        # === Metadata with AWS-specific information ===
-        metadata: dict[str, Any] = {}
-        metadata["original_resource_type"] = resource_type
-        metadata["original_resource_name"] = clean_name
-
-        provider_name = resource_data.get("provider_name")
-        if provider_name:
-            metadata["aws_provider"] = provider_name
-
-        # Placement information - use metadata values for concrete resolution
-        metadata_availability_zone = metadata_values.get("availability_zone")
-        if metadata_availability_zone:
-            metadata["aws_availability_zone"] = metadata_availability_zone
-
-        metadata_region = metadata_values.get("region")
-        if metadata_region:
-            metadata["aws_region"] = metadata_region
-
-        # Encryption information
-        metadata_encrypted = metadata_values.get("encrypted")
-        if metadata_encrypted is not None:
-            metadata["aws_encrypted"] = metadata_encrypted
-
-        metadata_kms_key_id = metadata_values.get("kms_key_id")
-        if metadata_kms_key_id:
-            metadata["aws_kms_key_id"] = metadata_kms_key_id
-
-        # EBS volume type
-        metadata_volume_type = metadata_values.get("type")
-        if metadata_volume_type:
-            metadata["aws_volume_type"] = metadata_volume_type
-
-        # Performance settings
-        metadata_iops = metadata_values.get("iops")
-        if metadata_iops:
-            metadata["aws_iops"] = metadata_iops
-
-        metadata_throughput = metadata_values.get("throughput")
-        if metadata_throughput:
-            metadata["aws_throughput"] = metadata_throughput
-
-        # Multi-attach capability
-        metadata_multi_attach_enabled = metadata_values.get("multi_attach_enabled")
-        if metadata_multi_attach_enabled is not None:
-            metadata["aws_multi_attach_enabled"] = metadata_multi_attach_enabled
-
-        # Outpost deployment
-        metadata_outpost_arn = metadata_values.get("outpost_arn")
-        if metadata_outpost_arn:
-            metadata["aws_outpost_arn"] = metadata_outpost_arn
-
-        # Snapshot configuration
-        metadata_final_snapshot = metadata_values.get("final_snapshot")
-        if metadata_final_snapshot is not None:
-            metadata["aws_final_snapshot"] = metadata_final_snapshot
-
-        # Volume initialization rate
-        metadata_volume_initialization_rate = metadata_values.get(
-            "volume_initialization_rate"
+        # Build and set metadata
+        metadata = self._build_metadata(
+            resource_data, resource_type, clean_name, context
         )
-        if metadata_volume_initialization_rate:
-            metadata["aws_volume_initialization_rate"] = (
-                metadata_volume_initialization_rate
-            )
-
-        # Volume ARN
-        metadata_arn = metadata_values.get("arn")
-        if metadata_arn:
-            metadata["aws_arn"] = metadata_arn
-
-        # Creation timestamp
-        metadata_create_time = metadata_values.get("create_time")
-        if metadata_create_time:
-            metadata["aws_create_time"] = metadata_create_time
-
-        # Tags
-        metadata_tags = metadata_values.get("tags", {})
-        if metadata_tags:
-            metadata["aws_tags"] = metadata_tags
-
-        metadata_tags_all = metadata_values.get("tags_all", {})
-        if metadata_tags_all and metadata_tags_all != metadata_tags:
-            metadata["aws_tags_all"] = metadata_tags_all
-
-        # Attach all metadata to the node
         volume_node.with_metadata(metadata)
 
         # Add the 'attachment' capability to allow attaching to compute nodes
         volume_node.add_capability("attachment").and_node()
 
-        # Add dependencies using injected context
-        if context:
-            terraform_refs = context.extract_terraform_references(resource_data)
-            logger.debug(
-                f"Found {len(terraform_refs)} terraform references for {resource_name}"
-            )
-
-            for prop_name, target_ref, relationship_type in terraform_refs:
-                logger.debug(
-                    "Processing reference: %s -> %s (%s)",
-                    prop_name,
-                    target_ref,
-                    relationship_type,
-                )
-
-                if "." in target_ref:
-                    # target_ref is like "aws_kms_key.main"
-                    target_resource_type = target_ref.split(".", 1)[0]
-                    target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                        target_ref, target_resource_type
-                    )
-
-                    # Add requirement with the property name as the requirement name
-                    requirement_name = (
-                        prop_name if prop_name not in ["dependency"] else "dependency"
-                    )
-
-                    (
-                        volume_node.add_requirement(requirement_name)
-                        .to_node(target_node_name)
-                        .with_relationship(relationship_type)
-                        .and_node()
-                    )
-
-                    logger.info(
-                        "Added %s requirement '%s' to '%s' with relationship %s",
-                        requirement_name,
-                        target_node_name,
-                        node_name,
-                        relationship_type,
-                    )
-        else:
-            logger.warning(
-                "No context provided to detect dependencies for resource '%s'",
-                resource_name,
-            )
+        # Process dependencies
+        self._process_dependencies(
+            volume_node, resource_data, context, node_name, resource_name
+        )
 
         logger.debug(f"Storage.BlockStorage node '{node_name}' created successfully.")
 
-        # Log mapped properties for debugging - use metadata values for concrete display
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Mapped properties for '{node_name}':")
-            logger.debug(f"  - Size: {size} GiB")
-            logger.debug(f"  - Availability Zone: {metadata_availability_zone}")
-            logger.debug(f"  - Volume Type: {metadata_volume_type}")
-            logger.debug(f"  - Encrypted: {metadata_encrypted}")
-            logger.debug(f"  - IOPS: {metadata_iops}")
-            logger.debug(f"  - Throughput: {metadata_throughput}")
-            logger.debug(f"  - Tags: {metadata_tags}")
+        # Log mapped properties for debugging
+        metadata_values = self._get_resolved_values(resource_data, context, "metadata")
+        self._log_mapped_properties(node_name, values, metadata_values)

@@ -92,6 +92,7 @@ class TerraformMapper(BaseResourceMapper):
                 "aws_route_table_association",
                 "aws_volume_attachment",
                 "aws_route",
+                "aws_lb_target_group_attachment",
             ]
             if resource_type in association_types:
                 association_resources.append(

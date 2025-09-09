@@ -312,4 +312,4 @@ class TestSeparateRulesAndDependencies:
 
         node = next(iter(b.nodes.values()))
         # Expect a single dependency to aws_vpc_main with DependsOn
-        assert ("vpc_id", "aws_vpc_main", "DependsOn") in node.requirements
+        assert ("dependency", "aws_vpc_main", "DependsOn") in node.requirements

@@ -105,10 +105,24 @@ class TerraformOrchestrator(BaseOrchestrator):
             "aws_route_table_association", AWSRouteTableAssociationMapper()
         )
 
+        # Register the mapper for AWS Load Balancer Target Group Attachment
+        from .mappers.aws.aws_lb_target_group_attachment import (
+            AWSLBTargetGroupAttachmentMapper,
+        )
+
+        self._mapper.register_mapper(
+            "aws_lb_target_group_attachment", AWSLBTargetGroupAttachmentMapper()
+        )
+
         # Register the mapper for AWS DB Instance
         from .mappers.aws.aws_db_instance import AWSDBInstanceMapper
 
         self._mapper.register_mapper("aws_db_instance", AWSDBInstanceMapper())
+
+        # Register the mapper for AWS RDS Cluster
+        from .mappers.aws.aws_rds_cluster import AWSRDSClusterMapper
+
+        self._mapper.register_mapper("aws_rds_cluster", AWSRDSClusterMapper())
 
         # Register the mapper for AWS DB Subnet Group
         from .mappers.aws.aws_db_subnet_group import AWSDBSubnetGroupMapper
@@ -145,6 +159,11 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         aws_lb_mapper = AWSLoadBalancerMapper()
         self._mapper.register_mapper("aws_lb", aws_lb_mapper)
+
+        # Register the mapper for AWS Load Balancer Target Group
+        from .mappers.aws.aws_lb_target_group import AWSLBTargetGroupMapper
+
+        self._mapper.register_mapper("aws_lb_target_group", AWSLBTargetGroupMapper())
 
         # Register the mapper for AWS Elastic IP
         from .mappers.aws.aws_eip import AWSEIPMapper
@@ -197,6 +216,18 @@ class TerraformOrchestrator(BaseOrchestrator):
 
         self._mapper.register_mapper(
             "aws_elasticache_replication_group", AWSElastiCacheReplicationGroupMapper()
+        )
+
+        # Register the mapper for AWS Load Balancer Listener
+        from .mappers.aws.aws_lb_listener import AWSLBListenerMapper
+
+        self._mapper.register_mapper("aws_lb_listener", AWSLBListenerMapper())
+
+        # Register the mapper for AWS ElastiCache Cluster
+        from .mappers.aws.aws_elasticache_cluster import AWSElastiCacheClusterMapper
+
+        self._mapper.register_mapper(
+            "aws_elasticache_cluster", AWSElastiCacheClusterMapper()
         )
 
         self._logger.info("Registration completed.")

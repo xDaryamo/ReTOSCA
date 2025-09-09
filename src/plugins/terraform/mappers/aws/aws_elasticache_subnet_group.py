@@ -1,14 +1,31 @@
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from src.core.common.base_mapper import BaseResourceMapper
 from src.core.protocols import SingleResourceMapper
+from src.plugins.terraform.exceptions import (
+    ResourceMappingError,
+    TerraformDataError,
+)
 
 if TYPE_CHECKING:
-    from src.models.v2_0.builder import ServiceTemplateBuilder
+    from src.models.v2_0.builder import PolicyBuilder, ServiceTemplateBuilder
     from src.plugins.terraform.context import TerraformMappingContext
 
 logger = logging.getLogger(__name__)
+
+
+class ElastiCacheSubnetGroupData(TypedDict, total=False):
+    """Typed structure for ElastiCache subnet group data."""
+
+    resource_name: str
+    resource_type: str
+    clean_name: str
+    values: dict[str, Any]
+    metadata_values: dict[str, Any]
+    subnet_ids: list[str]
+    has_subnet_references: bool
+    provider_name: str | None
 
 
 class AWSElastiCacheSubnetGroupMapper(SingleResourceMapper):
@@ -22,7 +39,6 @@ class AWSElastiCacheSubnetGroupMapper(SingleResourceMapper):
 
     def can_map(self, resource_type: str, resource_data: dict[str, Any]) -> bool:
         """Return True for resource type 'aws_elasticache_subnet_group'."""
-        _ = resource_data  # Parameter required by protocol but not used
         return resource_type == "aws_elasticache_subnet_group"
 
     def map_resource(
@@ -43,19 +59,13 @@ class AWSElastiCacheSubnetGroupMapper(SingleResourceMapper):
             context: TerraformMappingContext for variable resolution and
                 dependency analysis
         """
-        logger.info("Mapping ElastiCache Subnet Group resource: '%s'", resource_name)
+        logger.info(f"Mapping ElastiCache Subnet Group resource: '{resource_name}'")
 
-        # Debug: Log the raw resource data
-        logger.debug("Raw resource_data: %s", resource_data)
-
-        # Get resolved values using the context for properties
+        # Early guard: check if resource has values
         if context:
             values = context.get_resolved_values(resource_data, "property")
-            logger.debug("Resolved values: %s", values)
         else:
-            # Fallback to original values if no context available
             values = resource_data.get("values", {})
-            logger.debug("Original values (no context): %s", values)
 
         if not values:
             logger.warning(
@@ -63,173 +73,360 @@ class AWSElastiCacheSubnetGroupMapper(SingleResourceMapper):
             )
             return
 
-        # Check for subnet_ids in values or configuration expressions
-        subnet_ids = values.get("subnet_ids", [])
-        has_subnet_references = False
-
-        # If no direct subnet_ids, check for Terraform references in configuration
-        if not subnet_ids and context:
-            terraform_refs = context.extract_terraform_references(resource_data)
-            logger.debug(
-                "Found %d terraform references for %s: %s",
-                len(terraform_refs),
-                resource_name,
-                terraform_refs,
+        try:
+            # Prepare and validate all mapping data
+            mapping_data = self._prepare_mapping_data(
+                resource_name, resource_type, resource_data, context
             )
-            # Debug: print the parsed_data structure to see configuration
-            logger.debug("Context parsed_data keys: %s", context.parsed_data.keys())
+
+            # Create the TOSCA placement policy with metadata
+            policy_builder = self._create_placement_policy(
+                mapping_data, builder, context
+            )
+
+            # Add ElastiCache targets if available
+            targets_added = self._add_elasticache_targets(
+                policy_builder, mapping_data, context
+            )
+
+            # Finalize and log success
+            self._finalize_and_log_success(policy_builder, mapping_data, targets_added)
+
+        except TerraformDataError as e:
+            # Handle validation errors gracefully by logging and skipping
+            if "Missing required field" in str(e) and "subnet_ids" in str(e):
+                logger.error(
+                    "Resource '%s' missing required field 'subnet_ids' and no "
+                    "subnet references found. Skipping.",
+                    resource_name,
+                )
+                return
+            else:
+                # Re-raise other TerraformDataErrors
+                raise
+        except ResourceMappingError:
+            raise
+        except Exception as e:
+            raise ResourceMappingError(
+                "Unexpected error mapping ElastiCache subnet group",
+                resource_name=resource_name,
+                resource_type=resource_type,
+                mapping_phase="policy_creation",
+            ) from e
+
+    def _prepare_mapping_data(
+        self,
+        resource_name: str,
+        resource_type: str,
+        resource_data: dict[str, Any],
+        context: "TerraformMappingContext | None",
+    ) -> ElastiCacheSubnetGroupData:
+        """Prepare and validate all data needed for mapping.
+        Args:
+            resource_name: Name of the Terraform resource
+            resource_type: Type of the Terraform resource
+            resource_data: Raw resource data from Terraform plan
+            context: Optional mapping context for resolution
+
+        Returns:
+            Validated and structured mapping data
+        Raises:
+            TerraformDataError: If required data is missing or invalid
+        """
+        logger.debug(f"Raw resource_data: {resource_data}")
+
+        # Get resolved values using cached context resolution
+        values = self._get_resolved_values(resource_data, context, "property")
+        metadata_values = self._get_resolved_values(resource_data, context, "metadata")
+
+        if not values:
+            raise TerraformDataError(
+                "Resource has no 'values' section",
+                resource_name=resource_name,
+                missing_field="values",
+            )
+
+        # Analyze subnet configuration
+        subnet_ids = values.get("subnet_ids", [])
+        has_subnet_references = self._check_subnet_references(resource_data, context)
+
+        # Validate subnet configuration
+        if not subnet_ids and not has_subnet_references:
+            raise TerraformDataError(
+                "Missing required field 'subnet_ids' and no subnet references found",
+                resource_name=resource_name,
+                missing_field="subnet_ids",
+            )
+
+        # Extract clean name
+        clean_name = (
+            resource_name.split(".", 1)[1] if "." in resource_name else resource_name
+        )
+
+        return ElastiCacheSubnetGroupData(
+            resource_name=resource_name,
+            resource_type=resource_type,
+            clean_name=clean_name,
+            values=values,
+            metadata_values=metadata_values,
+            subnet_ids=subnet_ids,
+            has_subnet_references=has_subnet_references,
+            provider_name=resource_data.get("provider_name"),
+        )
+
+    def _get_resolved_values(
+        self,
+        resource_data: dict[str, Any],
+        context: "TerraformMappingContext | None",
+        value_type: str,
+    ) -> dict[str, Any]:
+        """Get resolved values from context or fallback to original values."""
+        if context:
+            values = context.get_resolved_values(resource_data, value_type)
+            logger.debug(f"Resolved {value_type} values: {values}")
+            return values
+        else:
+            values = resource_data.get("values", {})
+            logger.debug(f"Original {value_type} values (no context): {values}")
+            return values
+
+    def _check_subnet_references(
+        self, resource_data: dict[str, Any], context: "TerraformMappingContext | None"
+    ) -> bool:
+        """Check if resource has Terraform references to subnets."""
+        if not context:
+            return False
+
+        terraform_refs = context.extract_terraform_references(resource_data)
+        logger.debug(
+            f"Found {len(terraform_refs)} terraform references: {terraform_refs}"
+        )
+
+        # Debug context structure
+        if context.parsed_data:
+            logger.debug(f"Context parsed_data keys: {context.parsed_data.keys()}")
             if "plan" in context.parsed_data:
                 plan_config = context.parsed_data["plan"].get("configuration", {})
-                logger.debug("Plan configuration keys: %s", plan_config.keys())
-            for prop_name, _, _ in terraform_refs:
-                if prop_name == "subnet_ids":
-                    has_subnet_references = True
-                    break
+                logger.debug(f"Plan configuration keys: {plan_config.keys()}")
 
-        # Validate that we have either concrete subnet_ids or references
-        if not subnet_ids and not has_subnet_references:
-            logger.error(
-                "Resource '%s' missing required field 'subnet_ids' and no "
-                "subnet references found. Skipping.",
-                resource_name,
-            )
+        return any(prop_name == "subnet_ids" for prop_name, _, _ in terraform_refs)
+
+    def _create_placement_policy(
+        self,
+        mapping_data: ElastiCacheSubnetGroupData,
+        builder: "ServiceTemplateBuilder",
+        context: "TerraformMappingContext | None" = None,
+    ) -> "PolicyBuilder":
+        """Create TOSCA placement policy with comprehensive metadata."""
+        policy_name = BaseResourceMapper.generate_tosca_node_name(
+            mapping_data["resource_name"], mapping_data["resource_type"]
+        )
+
+        metadata = self._build_comprehensive_metadata(mapping_data, context)
+
+        # Create the Placement policy
+        policy_builder = builder.add_policy(policy_name, "Placement")
+        policy_builder.with_metadata(metadata)
+
+        return policy_builder
+
+    def _build_comprehensive_metadata(
+        self,
+        mapping_data: ElastiCacheSubnetGroupData,
+        context: "TerraformMappingContext | None" = None,
+    ) -> dict[str, Any]:
+        """Build comprehensive metadata dictionary."""
+        values = mapping_data["values"]
+        metadata_values = mapping_data["metadata_values"]
+
+        # Base metadata
+        metadata = {
+            "original_resource_type": mapping_data["resource_type"],
+            "original_resource_name": mapping_data["clean_name"],
+            "aws_component_type": "ElastiCacheSubnetGroup",
+            "description": (
+                "AWS ElastiCache Subnet Group for cache placement within VPC subnets"
+            ),
+        }
+
+        # Add provider information if available
+        if mapping_data["provider_name"]:
+            metadata["terraform_provider"] = mapping_data["provider_name"]
+
+        # Core properties
+        self._add_core_metadata(metadata, values, metadata_values)
+
+        # Placement-specific metadata
+        self._add_placement_metadata(metadata, mapping_data)
+
+        # AWS computed attributes
+        self._add_aws_attributes(metadata, metadata_values)
+
+        # Add subnet details if context is available
+        self._add_subnet_details(metadata, mapping_data, context)
+
+        return metadata
+
+    def _add_subnet_details(
+        self,
+        metadata: dict[str, Any],
+        mapping_data: ElastiCacheSubnetGroupData,
+        context: "TerraformMappingContext | None",
+    ) -> None:
+        """Add detailed subnet information to metadata if available."""
+        if not context:
             return
 
-        # Generate a unique TOSCA policy name using the utility function
-        policy_name = BaseResourceMapper.generate_tosca_node_name(
-            resource_name, resource_type
-        )
+        # Extract subnet details from parsed data if subnet references exist
+        if mapping_data["has_subnet_references"]:
+            parsed_data = context.parsed_data
+            if parsed_data:
+                subnet_details = []
+                availability_zones = set()
 
-        # Extract the clean name for metadata (without the type prefix)
-        if "." in resource_name:
-            _, clean_name = resource_name.split(".", 1)
-        else:
-            clean_name = resource_name
+                # Look for subnet resources in the parsed data
+                planned_values = parsed_data.get("planned_values", {})
+                root_module = planned_values.get("root_module", {})
+                resources = root_module.get("resources", [])
 
-        # Get resolved values specifically for metadata (always concrete values)
-        if context:
-            metadata_values = context.get_resolved_values(resource_data, "metadata")
-        else:
-            metadata_values = resource_data.get("values", {})
+                for resource in resources:
+                    if resource.get("type") == "aws_subnet":
+                        values = resource.get("values", {})
+                        subnet_info = {
+                            "address": resource.get("address", ""),
+                            "cidr_block": values.get("cidr_block", ""),
+                            "availability_zone": values.get("availability_zone", ""),
+                            "map_public_ip_on_launch": values.get(
+                                "map_public_ip_on_launch", False
+                            ),
+                        }
+                        subnet_details.append(subnet_info)
 
-        # Build comprehensive metadata with Terraform and AWS information
-        metadata: dict[str, Any] = {}
+                        if az := values.get("availability_zone"):
+                            availability_zones.add(az)
 
-        # Original resource information
-        metadata["original_resource_type"] = resource_type
-        metadata["original_resource_name"] = clean_name
-        metadata["aws_component_type"] = "ElastiCacheSubnetGroup"
-        metadata["description"] = (
-            "AWS ElastiCache Subnet Group for cache placement within VPC subnets"
-        )
+                if subnet_details:
+                    metadata["aws_subnet_details"] = subnet_details
+                if availability_zones:
+                    metadata["aws_availability_zones"] = sorted(availability_zones)
 
-        # Information from resource_data if available
-        provider_name = resource_data.get("provider_name")
-        if provider_name:
-            metadata["terraform_provider"] = provider_name
+    def _add_core_metadata(
+        self,
+        metadata: dict[str, Any],
+        values: dict[str, Any],
+        metadata_values: dict[str, Any],
+    ) -> None:
+        """Add core ElastiCache subnet group metadata."""
+        # Subnet group name and description
+        if name := metadata_values.get("name"):
+            metadata["aws_cache_subnet_group_name"] = name
 
-        # Core ElastiCache Subnet Group properties - use metadata values for
-        # concrete resolution and put in metadata (not properties)
-        subnet_group_name = values.get("name")
-        metadata_subnet_group_name = metadata_values.get("name")
-        if metadata_subnet_group_name:
-            metadata["aws_cache_subnet_group_name"] = metadata_subnet_group_name
+        if description := metadata_values.get("description"):
+            metadata["aws_cache_subnet_group_description"] = description
 
-        # Description for the subnet group
-        metadata_description = metadata_values.get("description")
-        if metadata_description:
-            metadata["aws_cache_subnet_group_description"] = metadata_description
+        # Subnet IDs
+        if subnet_ids := metadata_values.get("subnet_ids", []):
+            metadata["aws_subnet_ids"] = subnet_ids
+            metadata["aws_subnet_count"] = len(subnet_ids)
 
-        # Subnet IDs (already validated above) - define placement constraints
-        metadata_subnet_ids = metadata_values.get("subnet_ids", [])
-        if metadata_subnet_ids:
-            metadata["aws_subnet_ids"] = metadata_subnet_ids
-            metadata["aws_subnet_count"] = len(metadata_subnet_ids)
+        # Tags
+        if tags := metadata_values.get("tags", {}):
+            metadata["aws_tags"] = tags
 
-        # Add placement-specific metadata
+        if tags_all := metadata_values.get("tags_all", {}):
+            if tags_all != metadata.get("aws_tags", {}):
+                metadata["aws_tags_all"] = tags_all
+
+    def _add_placement_metadata(
+        self, metadata: dict[str, Any], mapping_data: ElastiCacheSubnetGroupData
+    ) -> None:
+        """Add placement-specific metadata."""
+        values = mapping_data["values"]
+        subnet_ids = mapping_data["subnet_ids"]
+        has_subnet_references = mapping_data["has_subnet_references"]
+
         if subnet_ids or has_subnet_references:
             metadata["placement_zone"] = "cache_subnet_group"
-            metadata["subnet_group_name"] = subnet_group_name or clean_name
-            # Use subnet count if available, otherwise indicate reference-based
+            metadata["subnet_group_name"] = (
+                values.get("name") or mapping_data["clean_name"]
+            )
+
             if subnet_ids:
                 metadata["availability_zones_count"] = len(subnet_ids)
             else:
                 metadata["availability_zones"] = "referenced"
 
-        # Extract subnet information to get availability zones (if context available)
-        if context:
-            subnet_info = self._extract_subnet_information(resource_data, context)
-            if subnet_info:
-                metadata["aws_subnet_details"] = subnet_info
-                metadata["aws_availability_zones"] = [
-                    subnet["availability_zone"]
-                    for subnet in subnet_info
-                    if subnet.get("availability_zone")
-                ]
+    def _add_aws_attributes(
+        self, metadata: dict[str, Any], metadata_values: dict[str, Any]
+    ) -> None:
+        """Add AWS computed attributes to metadata."""
+        # Map AWS attributes efficiently
+        aws_attrs = {
+            "region": "aws_region",
+            "arn": "aws_arn",
+            "id": "aws_cache_subnet_group_id",
+            "vpc_id": "aws_vpc_id",
+        }
 
-        # Region information
-        metadata_region = metadata_values.get("region")
-        if metadata_region:
-            metadata["aws_region"] = metadata_region
+        for aws_key, metadata_key in aws_attrs.items():
+            if value := metadata_values.get(aws_key):
+                metadata[metadata_key] = value
 
-        # Tags for the subnet group
-        metadata_tags = metadata_values.get("tags", {})
-        if metadata_tags:
-            metadata["aws_tags"] = metadata_tags
+    def _add_elasticache_targets(
+        self,
+        policy_builder: "PolicyBuilder",
+        mapping_data: ElastiCacheSubnetGroupData,
+        context: "TerraformMappingContext | None",
+    ) -> bool:
+        """Add ElastiCache targets to the placement policy."""
+        if not context:
+            return False
 
-        # Tags_all (all tags including provider defaults)
-        metadata_tags_all = metadata_values.get("tags_all", {})
-        if metadata_tags_all and metadata_tags_all != metadata_tags:
-            metadata["aws_tags_all"] = metadata_tags_all
+        subnet_group_name = mapping_data["metadata_values"].get("name") or mapping_data[
+            "values"
+        ].get("name")
 
-        # Computed attributes from AWS
-        metadata_arn = metadata_values.get("arn")
-        if metadata_arn:
-            metadata["aws_arn"] = metadata_arn
+        target_nodes = self._find_elasticache_targets(
+            subnet_group_name, mapping_data["clean_name"], context
+        )
 
-        metadata_cache_subnet_group_id = metadata_values.get("id")
-        if metadata_cache_subnet_group_id:
-            metadata["aws_cache_subnet_group_id"] = metadata_cache_subnet_group_id
-
-        metadata_vpc_id = metadata_values.get("vpc_id")
-        if metadata_vpc_id:
-            metadata["aws_vpc_id"] = metadata_vpc_id
-
-        # Create the Placement policy
-        policy_builder = builder.add_policy(policy_name, "Placement")
-
-        # Add metadata to the policy (no properties for Placement type)
-        policy_builder.with_metadata(metadata)
-
-        # Find and add targets - ElastiCache nodes that use this subnet group
-        targets_added = False
-        if context:
-            target_nodes = self._find_elasticache_targets(
-                metadata_subnet_group_name or subnet_group_name, clean_name, context
-            )
-            if target_nodes:
-                policy_builder.with_targets(*target_nodes)
-                targets_added = True
-                logger.info(
-                    "Policy '%s' will target %d ElastiCache nodes: %s",
-                    policy_name,
-                    len(target_nodes),
-                    target_nodes,
-                )
-
-        # If no ElastiCache targets found, this policy could target any
-        # future ElastiCache nodes that might reference this subnet group
-        if not targets_added:
+        if target_nodes:
+            policy_builder.with_targets(*target_nodes)
             logger.info(
-                "Policy '%s' has no specific targets - it will govern "
-                "placement for any ElastiCache resources using subnet group '%s'",
-                policy_name,
-                subnet_group_name or clean_name,
+                f"Policy will target {len(target_nodes)} ElastiCache nodes: "
+                f"{target_nodes}"
             )
+            return True
 
+        return False
+
+    def _finalize_and_log_success(
+        self,
+        policy_builder: "PolicyBuilder",
+        mapping_data: ElastiCacheSubnetGroupData,
+        targets_added: bool,
+    ) -> None:
+        """Finalize policy and log success information."""
         policy_builder.and_service()
 
-        # Log success with appropriate subnet count information
+        policy_name = BaseResourceMapper.generate_tosca_node_name(
+            mapping_data["resource_name"], mapping_data["resource_type"]
+        )
+
+        subnet_ids = mapping_data["subnet_ids"]
+        has_subnet_references = mapping_data["has_subnet_references"]
+        clean_name = mapping_data["clean_name"]
+
+        # Log policy target information
+        if not targets_added:
+            subnet_group_name = mapping_data["values"].get("name") or clean_name
+            logger.info(
+                f"Policy '{policy_name}' has no specific targets - it will govern "
+                f"placement for any ElastiCache resources using "
+                f"subnet group '{subnet_group_name}'"
+            )
+
+        # Log success with subnet count
         if subnet_ids:
             subnet_count_msg = f"with {len(subnet_ids)} subnets"
         elif has_subnet_references:
@@ -238,34 +435,33 @@ class AWSElastiCacheSubnetGroupMapper(SingleResourceMapper):
             subnet_count_msg = "with unknown subnet count"
 
         logger.info(
-            "Successfully created Placement policy '%s' for ElastiCache Subnet "
-            "Group %s",
-            policy_name,
-            subnet_count_msg,
+            f"Successfully created Placement policy '{policy_name}' for ElastiCache "
+            f"Subnet Group {subnet_count_msg}"
         )
 
-        # Debug: mapped metadata - use metadata values for concrete display
+        # Debug mapped metadata
+        self._log_debug_metadata(policy_name, mapping_data, targets_added)
+
+    def _log_debug_metadata(
+        self,
+        policy_name: str,
+        mapping_data: ElastiCacheSubnetGroupData,
+        targets_added: bool,
+    ) -> None:
+        """Log detailed debug information about mapped metadata."""
+        metadata_values = mapping_data["metadata_values"]
+
         logger.debug(
-            "Mapped ElastiCache Subnet Group metadata for '%s':\n"
-            "  - Name: %s\n"
-            "  - Description: %s\n"
-            "  - Subnet IDs: %s\n"
-            "  - Region: %s\n"
-            "  - VPC ID: %s\n"
-            "  - Tags: %s\n"
-            "  - ARN: %s\n"
-            "  - Placement Zone: %s\n"
-            "  - Targets Added: %s",
-            policy_name,
-            metadata_subnet_group_name,
-            metadata_description,
-            metadata_subnet_ids,
-            metadata_region,
-            metadata_vpc_id,
-            metadata_tags,
-            metadata_arn,
-            metadata.get("placement_zone", "N/A"),
-            targets_added,
+            f"Mapped ElastiCache Subnet Group metadata for '{policy_name}':\n"
+            f"  - Name: {metadata_values.get('name')}\n"
+            f"  - Description: {metadata_values.get('description')}\n"
+            f"  - Subnet IDs: {metadata_values.get('subnet_ids', [])}\n"
+            f"  - Region: {metadata_values.get('region')}\n"
+            f"  - VPC ID: {metadata_values.get('vpc_id')}\n"
+            f"  - Tags: {metadata_values.get('tags', {})}\n"
+            f"  - ARN: {metadata_values.get('arn')}\n"
+            f"  - Placement Zone: cache_subnet_group\n"
+            f"  - Targets Added: {targets_added}"
         )
 
     def _extract_subnet_information(
@@ -323,7 +519,7 @@ class AWSElastiCacheSubnetGroupMapper(SingleResourceMapper):
                         subnet_info.append(subnet_detail)
                         break
 
-        logger.debug("Extracted subnet information: %d subnets found", len(subnet_info))
+        logger.debug(f"Extracted subnet information: {len(subnet_info)} subnets found")
         return subnet_info
 
     def _find_elasticache_targets(
@@ -342,46 +538,56 @@ class AWSElastiCacheSubnetGroupMapper(SingleResourceMapper):
         Returns:
             List of ElastiCache node names that should be targeted
         """
-        targets: list[str] = []
-
-        # Get parsed data from context to find ElastiCache resources
         parsed_data = context.parsed_data
         if not parsed_data:
             logger.debug("Could not access parsed_data for target identification")
-            return targets
+            return []
 
-        # Look for ElastiCache resources that reference this subnet group
-        planned_values = parsed_data.get("planned_values", {})
-        root_module = planned_values.get("root_module", {})
-
+        # Get ElastiCache resources efficiently
+        elasticache_resources = self._get_elasticache_resources(context)
         target_subnet_group = subnet_group_name or clean_name
 
-        # Check both cluster and replication group resources
-        elasticache_resource_types = [
-            "aws_elasticache_cluster",
-            "aws_elasticache_replication_group",
+        # Use list comprehension for better performance
+        targets = [
+            BaseResourceMapper.generate_tosca_node_name(
+                f"{resource['address']}_dbms", resource["type"]
+            )
+            for resource in elasticache_resources
+            if (
+                resource.get("values", {}).get("subnet_group_name")
+                == target_subnet_group
+                and resource.get("address")
+            )
         ]
 
-        for resource in root_module.get("resources", []):
-            resource_type = resource.get("type")
-            if resource_type in elasticache_resource_types:
-                elasticache_values = resource.get("values", {})
-                elasticache_subnet_group = elasticache_values.get("subnet_group_name")
-
-                # Check if this ElastiCache resource uses our subnet group
-                if elasticache_subnet_group == target_subnet_group:
-                    elasticache_address = resource.get("address", "")
-                    if elasticache_address:
-                        # Generate the TOSCA node name for the ElastiCache resource
-                        cache_node_name = BaseResourceMapper.generate_tosca_node_name(
-                            elasticache_address, resource_type
-                        )
-                        targets.append(cache_node_name)
-
-                        logger.debug(
-                            "Found ElastiCache resource '%s' using subnet group '%s'",
-                            elasticache_address,
-                            target_subnet_group,
-                        )
-
         return targets
+
+    def _get_elasticache_resources(
+        self, context: "TerraformMappingContext"
+    ) -> list[dict[str, Any]]:
+        """Get all ElastiCache resources from context.
+
+        Note: Removed caching to avoid potential memory leaks with method caching.
+        """
+        parsed_data = context.parsed_data
+        if not parsed_data:
+            return []
+
+        # Look for ElastiCache resources in planned values
+        planned_values = parsed_data.get("planned_values", {})
+        if not planned_values and "plan" in parsed_data:
+            planned_values = parsed_data["plan"].get("planned_values", {})
+
+        root_module = planned_values.get("root_module", {})
+
+        # Filter ElastiCache resources efficiently
+        elasticache_types = {
+            "aws_elasticache_cluster",
+            "aws_elasticache_replication_group",
+        }
+
+        return [
+            resource
+            for resource in root_module.get("resources", [])
+            if resource.get("type") in elasticache_types
+        ]
