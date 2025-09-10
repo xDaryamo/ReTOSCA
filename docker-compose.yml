@@ -1,0 +1,43 @@
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports:
+      - "4566:4566"       # porta edge
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=eu-west-1
+    volumes:
+      - "localstack_data:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - localstack
+    volumes:
+      - .:/app   # monta repo locale dentro container
+    working_dir: /app
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=eu-west-1
+      - LOCALSTACK_HOST=localstack
+    # sovrascrivibile da CLI: input_dir output_file [--debug] [--no-validate]
+    entrypoint: ["python", "-m", "src.main"]
+
+  validate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app   # monta repo locale dentro container
+    working_dir: /app
+    # Per validare solo file TOSCA esistenti
+    entrypoint: ["/app/scripts/test-tosca.sh"]
+
+volumes:
+  localstack_data:

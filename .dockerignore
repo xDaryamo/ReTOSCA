@@ -1,0 +1,75 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.venv
+.pytest_cache
+
+# Terraform
+**/.terraform/
+**/.terraform/**
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+**/*.tfstate
+**/*.tfstate.*
+**/.terraform.lock.hcl
+
+# Documentation
+README.md
+CLAUDE.md
+TOSCA-v2.0.md
+
+# Test outputs
+htmlcov/
+output/
+tests/
+
+# Large directories that can slow build
+node_modules/
+.venv/
+venv/
+**/__pycache__/
+**/node_modules/
+**/.venv/
+**/venv/
+
+# Terraform provider cache (can be huge)
+**/.terraform/providers/
+**/terraform.d/
+**/.terraformrc
+
+# Explicitly exclude large example directories
+examples/*/.terraform/
+examples/*/*/.terraform/
+examples/*/*/*/.terraform/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
