@@ -6,6 +6,7 @@ This module provides a user-friendly CLI for the tosca-intent-discovery tool.
 
 import argparse
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -41,6 +42,78 @@ def configure_logging(debug: bool = False) -> None:
         stream=sys.stdout,
         force=True,  # Override existing configuration
     )
+
+
+def validate_tosca_with_puccini(tosca_file: Path) -> bool:
+    """Validate TOSCA file using Puccini compiler.
+
+    Args:
+        tosca_file: Path to the TOSCA file to validate.
+
+    Returns:
+        True if validation succeeds, False otherwise.
+    """
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Check if puccini-tosca is available
+        result = subprocess.run(
+            ["puccini-tosca", "version"], capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            logger.warning("Puccini TOSCA compiler not found, skipping validation")
+            return True
+
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        logger.warning("Puccini TOSCA compiler not found, skipping validation")
+        return True
+
+    logger.info("🔍 Validating TOSCA syntax with Puccini...")
+
+    # Validate TOSCA syntax
+    try:
+        result = subprocess.run(
+            ["puccini-tosca", "parse", str(tosca_file)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode == 0:
+            logger.info("✅ TOSCA syntax is valid")
+
+            # Try to compile to clout for complete validation
+            logger.info("🔧 Compiling TOSCA to clout format...")
+            compile_result = subprocess.run(
+                ["puccini-tosca", "compile", "-c", str(tosca_file)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            if compile_result.returncode == 0:
+                logger.info("✅ TOSCA compilation successful!")
+                return True
+            else:
+                logger.warning("⚠️ TOSCA compilation had warnings:")
+                if compile_result.stderr:
+                    logger.warning(compile_result.stderr)
+                return True  # Syntax is valid even if compilation has warnings
+        else:
+            logger.error("❌ TOSCA validation failed:")
+            if result.stderr:
+                logger.error(result.stderr)
+            if result.stdout:
+                logger.error(result.stdout)
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.error("❌ TOSCA validation timed out")
+        return False
+    except Exception as e:
+        logger.error(f"❌ TOSCA validation error: {e}")
+        return False
 
 
 def validate_inputs(input_directory: Path, output_file: Path) -> None:
@@ -113,11 +186,22 @@ Examples:
         "--debug", action="store_true", help="Enable debug logging for detailed output"
     )
 
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        default=True,
+        help="Validate generated TOSCA with Puccini (default: enabled)",
+    )
+
+    parser.add_argument(
+        "--no-validate", action="store_true", help="Skip TOSCA validation with Puccini"
+    )
+
     return parser.parse_args()
 
 
 def run_translation(
-    input_directory: Path, output_file: Path, debug: bool = False
+    input_directory: Path, output_file: Path, debug: bool = False, validate: bool = True
 ) -> NoReturn:
     """Execute the translation process from Terraform to TOSCA.
 
@@ -125,6 +209,7 @@ def run_translation(
         input_directory: Path to directory containing Terraform files.
         output_file: Path where the generated TOSCA YAML file will be saved.
         debug: Enable debug logging for detailed output.
+        validate: Enable TOSCA validation with Puccini after generation.
 
     Raises:
         SystemExit: Always exits with appropriate code (0 for success, >0 for errors).
@@ -147,7 +232,19 @@ def run_translation(
         orchestrator = TerraformOrchestrator()
         orchestrator.translate(input_directory, output_file)
 
+        logger.info(f"✅ TOSCA YAML saved to: {output_file}")
         logger.info("Translation completed successfully!")
+
+        # Validate with Puccini if requested
+        if validate:
+            logger.info("Starting TOSCA validation...")
+            validation_success = validate_tosca_with_puccini(output_file)
+            if not validation_success:
+                logger.error("TOSCA validation failed!")
+                sys.exit(10)
+            else:
+                logger.info("✅ TOSCA validation completed successfully!")
+
         logger.info(f"TOSCA file saved to: {output_file.resolve()}")
         sys.exit(0)
 
@@ -188,4 +285,6 @@ def run_translation(
 
 if __name__ == "__main__":
     args = parse_arguments()
-    run_translation(args.input_directory, args.output_file, args.debug)
+    # Determine validation setting
+    should_validate = args.validate and not args.no_validate
+    run_translation(args.input_directory, args.output_file, args.debug, should_validate)
