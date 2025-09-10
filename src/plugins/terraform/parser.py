@@ -349,6 +349,9 @@ class TerraformParser(BaseSourceFileParser):
         """
         self._logger.debug(f"Running command: {' '.join(cmd)} in {working_dir}")
 
+        # Set up environment for LocalStack
+        env = self._get_terraform_environment()
+
         try:
             result = subprocess.run(
                 cmd,
@@ -357,6 +360,7 @@ class TerraformParser(BaseSourceFileParser):
                 capture_output=capture_output,
                 text=True,
                 timeout=300,  # 5 minute timeout
+                env=env,
             )
 
             if capture_output:
@@ -522,3 +526,56 @@ class TerraformParser(BaseSourceFileParser):
                 self._logger.info("Stale state cleanup completed")
         else:
             self._logger.debug("No existing state file found, no cleanup needed")
+
+    def _get_localstack_host(self) -> str:
+        """
+        Determine the LocalStack host based on the environment.
+
+        Returns:
+            Host string to use for LocalStack connections
+        """
+        import os
+
+        # Check for Docker container environment
+        # Docker containers have .dockerenv file or specific environment variables
+        if (
+            os.path.exists("/.dockerenv")
+            or os.environ.get("DOCKER_CONTAINER") == "true"
+            or os.environ.get("LOCALSTACK_HOST") is not None
+        ):
+            # Use service name from docker-compose or environment variable
+            localstack_host = os.environ.get("LOCALSTACK_HOST", "localstack")
+            self._logger.debug(
+                f"Detected Docker environment, using host: {localstack_host}"
+            )
+            return localstack_host
+        else:
+            # Local development - use localhost
+            self._logger.debug("Detected local environment, using localhost")
+            return "localhost"
+
+    def _get_terraform_environment(self) -> dict[str, str]:
+        """
+        Get environment variables for Terraform/tflocal execution.
+
+        Returns:
+            Environment dictionary with LocalStack configuration
+        """
+        import os
+
+        # Start with current environment
+        env = os.environ.copy()
+
+        # Determine LocalStack host
+        localstack_host = self._get_localstack_host()
+
+        # Set LocalStack endpoint URL for tflocal
+        if localstack_host != "localhost":
+            # In Docker environment, override LocalStack endpoint
+            env["LOCALSTACK_HOSTNAME"] = localstack_host
+            env["LOCALSTACK_ENDPOINT"] = f"http://{localstack_host}:4566"
+            self._logger.debug(
+                f"Set LocalStack environment: LOCALSTACK_HOSTNAME={localstack_host}"
+            )
+
+        return env
