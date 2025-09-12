@@ -1,6 +1,6 @@
 import pytest
 
-from src.plugins.terraform.exceptions import ValidationError
+from src.plugins.provisioning.terraform.exceptions import ValidationError
 from src.plugins.terraform.mappers.aws.aws_lb_target_group_attachment import (
     AWSLBTargetGroupAttachmentMapper,
     TargetGroupAttachmentError,

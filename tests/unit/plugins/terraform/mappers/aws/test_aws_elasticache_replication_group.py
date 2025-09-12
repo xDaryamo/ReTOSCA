@@ -1,7 +1,7 @@
 # tests/test_aws_elasticache_replication_group_mapper.py
 import pytest
 
-from src.plugins.terraform.exceptions import TerraformDataError
+from src.plugins.provisioning.terraform.exceptions import TerraformDataError
 from src.plugins.terraform.mappers.aws.aws_elasticache_replication_group import (
     AWSElastiCacheReplicationGroupMapper,
 )
