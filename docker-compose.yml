@@ -1,49 +1,120 @@
+# ReTOSCA Standalone Docker Compose
+# Download this file and run: docker compose -f docker-compose-standalone.yml up
+#
+# Prerequisites: Docker and Docker Compose installed
+# No repository cloning required!
+
 services:
+  # LocalStack - AWS services emulation
   localstack:
     image: localstack/localstack:latest
-    container_name: localstack
+    container_name: retosca-localstack
     ports:
-      - "4566:4566"
+      - "4566:4566"  # LocalStack edge port
     environment:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=eu-west-1
+      - SERVICES=s3,ec2,iam,lambda,apigateway,dynamodb,rds,vpc,cloudformation
     volumes:
-      - "localstack_data:/var/lib/localstack"
+      - "retosca_localstack_data:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
+  # Main ReTOSCA application
   retosca:
     image: xdaryamo/retosca:latest
+    container_name: retosca-app
     depends_on:
-      - localstack
+      localstack:
+        condition: service_healthy
     environment:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=eu-west-1
       - LOCALSTACK_HOST=localstack
     volumes:
-      # Automatically mount input and output directories
-      - "${INPUT_DIR:-./input}:/app/input"
+      # Mount your Terraform files here
+      - "${TERRAFORM_DIR:-./terraform}:/app/input:ro"
+      # Generated TOSCA files will appear here
       - "${OUTPUT_DIR:-./output}:/app/output"
-      # Note: /app/examples is already included in the Docker image
+      # Examples from the image (read-only)
+      - "retosca_examples:/app/examples:ro"
     working_dir: /app
-    # No default command - user must specify what to do
+    # No default command - use the run script or specify manually
+    # Example: docker compose -f docker-compose-standalone.yml run retosca --source terraform:input output/result.yaml
     entrypoint: ["python", "-m", "src.main"]
 
+  # Extract built-in examples to your local machine
+  extract-examples:
+    image: xdaryamo/retosca:latest
+    container_name: retosca-examples
+    volumes:
+      # Examples will be copied to this directory
+      - "${EXAMPLES_DIR:-./examples}:/app/local-examples"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "🔄 Extracting examples to local directory..."
+        cp -r /app/examples/* /app/local-examples/ 2>/dev/null || echo "ℹ️  Some examples may not be accessible"
+        echo "✅ Examples extracted! Check your examples directory."
+        echo "📁 Available examples:"
+        find /app/local-examples -name "*.tf" | head -10
+        if [ $(find /app/local-examples -name "*.tf" | wc -l) -gt 10 ]; then
+          echo "   ... and more"
+        fi
+
+  # Validate generated TOSCA files
   validate:
     image: xdaryamo/retosca:latest
+    container_name: retosca-validate
     volumes:
-      # Mount directory with TOSCA files to validate
+      # Mount directory containing TOSCA files to validate
       - "${OUTPUT_DIR:-./output}:/app/tosca:ro"
     entrypoint: ["/app/scripts/test-tosca.sh"]
 
-  extract-examples:
+  # Interactive shell for advanced usage
+  shell:
     image: xdaryamo/retosca:latest
+    container_name: retosca-shell
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=eu-west-1
+      - LOCALSTACK_HOST=localstack
     volumes:
-      # Mount local directory where examples will be copied
-      - "${EXAMPLES_DIR:-./examples}:/app/local-examples"
-    entrypoint: ["sh", "-c"]
-    command: ["cp -r /app/examples/* /app/local-examples/ && echo '✅ Examples extracted to local directory!' && ls -la /app/local-examples/"]
+      - "${TERRAFORM_DIR:-./terraform}:/app/input:ro"
+      - "${OUTPUT_DIR:-./output}:/app/output"
+    working_dir: /app
+    entrypoint: ["/bin/bash"]
+    stdin_open: true
+    tty: true
 
 volumes:
-  localstack_data:
+  retosca_localstack_data:
+    driver: local
+  retosca_examples:
+    driver: local
+
+# Usage Examples:
+# 1. Extract examples:
+#    docker compose -f docker-compose-standalone.yml run --rm extract-examples
+#
+# 2. Process your Terraform files:
+#    TERRAFORM_DIR=/path/to/your/terraform docker compose -f docker-compose-standalone.yml run --rm retosca --source terraform:input output/result.yaml
+#
+# 3. Validate generated TOSCA:
+#    docker compose -f docker-compose-standalone.yml run --rm validate
+#
+# 4. Interactive shell:
+#    docker compose -f docker-compose-standalone.yml run --rm shell
+#
+# 5. Start LocalStack (for debugging):
+#    docker compose -f docker-compose-standalone.yml up localstack
