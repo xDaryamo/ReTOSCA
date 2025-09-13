@@ -1,0 +1,39 @@
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=eu-west-1
+    volumes:
+      - "localstack_data:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+  app:
+    image: xdaryamo/retosca:latest
+    depends_on:
+      - localstack
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=eu-west-1
+      - LOCALSTACK_HOST=localstack
+    volumes:
+      # Mount solo le directory necessarie per input/output
+      - ./examples:/app/examples:ro  # readonly examples
+      - ./output:/app/output         # output directory
+    entrypoint: ["python", "-m", "src.main"]
+
+  validate:
+    image: xdaryamo/retosca:latest
+    volumes:
+      # Mount solo directory con file TOSCA da validare
+      - ./examples:/app/examples:ro
+      - ./tosca_types:/app/tosca_types:ro
+    entrypoint: ["/app/scripts/test-tosca.sh"]
+
+volumes:
+  localstack_data:

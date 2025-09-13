@@ -16,6 +16,10 @@ python = "^3.11"
 pydantic = "^2.11.7"
 python-hcl2 = "^7.2.1"
 ruamel-yaml = "^0.18.14"
+localstack = "^4.7.0"
+localstack-client = "^2.10"
+awscli-local = "^0.22.2"
+terraform-local = "^0.24.1"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.2.0"
@@ -23,7 +27,7 @@ pytest = "^8.4.1"
 pytest-cov = "^6.2.1"
 pytest-mock = "^3.14.1"
 black = "^24.0.0"
-ruff = "^0.1.6"
+ruff = "^0.12.9"
 mypy = "^1.7.1"
 
 [build-system]
@@ -38,6 +42,8 @@ include = '\.pyi?$'
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+
+[tool.ruff.lint]
 select = [
     "E", "W",  # pycodestyle
     "F",       # pyflakes
@@ -61,6 +67,7 @@ warn_unused_ignores = true
 show_error_codes = true
 pretty = true
 ignore_missing_imports = true
+explicit_package_bases = true
 
 
 [tool.pytest.ini_options]

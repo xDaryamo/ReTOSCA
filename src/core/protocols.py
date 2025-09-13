@@ -56,6 +56,7 @@ class SingleResourceMapper(Protocol):
         resource_type: str,
         resource_data: dict[str, Any],
         builder: "ServiceTemplateBuilder",
+        context: Any = None,
     ) -> None:
         """
         Map a single resource to TOSCA using the builder.
@@ -65,6 +66,8 @@ class SingleResourceMapper(Protocol):
             resource_type: The type/kind of resource (e.g., 'aws_instance')
             resource_data: The resource configuration data
             builder: The ServiceTemplateBuilder to populate with TOSCA resources
+            context: Optional context object containing technology-specific
+                    dependencies (e.g., TerraformMappingContext)
         """
         ...
 
@@ -101,16 +104,36 @@ class ResourceMapper(Protocol):
         ...
 
 
-class Orchestrator(Protocol):
-    """Defines the contract for the main plugin execution flow."""
+class PhasePlugin(Protocol):
+    """Defines the contract for phase-specific plugins in the pipeline."""
 
-    def translate(
-        self, source_path: Path, output_file: Path
-    ) -> "ServiceTemplateBuilder":
+    def execute(self, source_path: Path, builder: "ServiceTemplateBuilder") -> None:
         """
-        Orchestrates the entire translation process:
-        1. Find and parse source files.
-        2. Map parsed resources to a TOSCA model using the builder.
-        3. Save the final TOSCA file.
+        Execute this plugin's phase, enriching the provided builder with TOSCA nodes.
+
+        Args:
+            source_path: Path to the source directory or file for this plugin
+            builder: ServiceTemplateBuilder to enrich with TOSCA nodes
+        """
+        ...
+
+    def can_handle(self, source_path: Path) -> bool:
+        """
+        Check if this plugin can handle the given source path.
+
+        Args:
+            source_path: Path to check for compatibility
+
+        Returns:
+            True if plugin can handle this source, False otherwise
+        """
+        ...
+
+    def get_plugin_info(self) -> dict:
+        """
+        Get information about this plugin.
+
+        Returns:
+            Dictionary with plugin metadata (name, phase, supported_types, etc.)
         """
         ...

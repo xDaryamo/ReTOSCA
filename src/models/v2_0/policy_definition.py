@@ -26,8 +26,7 @@ class PolicyDefinition(ToscaBase):
     targets: list[str] | None = Field(
         default=None,
         description=(
-            "Optional list of node template or group names to which the "
-            "policy applies."
+            "Optional list of node template or group names to which the policy applies."
         ),
     )
     triggers: dict[str, TriggerDefinition] | None = Field(

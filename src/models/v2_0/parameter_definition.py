@@ -34,14 +34,13 @@ class ParameterDefinition(ToscaBase):
     required: bool | None = Field(
         default=True,
         description=(
-            "Whether the parameter is required. Defaults to True if not " "specified."
+            "Whether the parameter is required. Defaults to True if not specified."
         ),
     )
     default: Any | None = Field(
         default=None,
         description=(
-            "Optional default value for the parameter if not provided "
-            "by other means."
+            "Optional default value for the parameter if not provided by other means."
         ),
     )
     validation: Any | None = Field(
@@ -71,8 +70,7 @@ class ParameterDefinition(ToscaBase):
         # value and mapping are mutually exclusive
         if self.value is not None and self.mapping is not None:
             raise ValueError(
-                "'value' and 'mapping' are mutually exclusive and "
-                "cannot both be set."
+                "'value' and 'mapping' are mutually exclusive and cannot both be set."
             )
         # your business rule: no default when required=False
         if self.required is False and self.default is not None:

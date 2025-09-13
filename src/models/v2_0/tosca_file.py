@@ -63,6 +63,6 @@ class ToscaFile(ToscaBase):
         valid_versions = ["tosca_2_0"]  # extend in future if needed
         if v not in valid_versions:
             raise ValueError(
-                "tosca_definitions_version must be one of: " f"{valid_versions}"
+                f"tosca_definitions_version must be one of: {valid_versions}"
             )
         return v

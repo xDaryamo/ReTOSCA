@@ -27,32 +27,41 @@ class BaseResourceMapper(ResourceMapper, ABC):
         """Initializes the mapper and the strategy registry."""
         self._logger = logger.getChild(self.__class__.__name__)
         self._mappers: dict[str, SingleResourceMapper] = {}
+        # Store relationship mappers for second-pass processing
+        self._relationship_mappers: dict[str, SingleResourceMapper] = {}
 
     @staticmethod
     def generate_tosca_node_name(resource_name: str, resource_type: str) -> str:
         """
-        Genera un nome di nodo TOSCA univoco basato sul nome e tipo della risorsa.
+        Generates a unique TOSCA node name based on the resource name and type.
 
-        Converte nomi come "aws_instance.web" in "aws_instance_web" per evitare
-        conflitti di nomi tra risorse di tipo diverso ma con lo stesso nome.
+        Converts names like "aws_instance.web" to "aws_instance_web" to avoid
+        name conflicts between resources of different types but with the same name.
 
         Args:
-            resource_name: Nome completo della risorsa (es. "aws_instance.web")
-            resource_type: Tipo della risorsa (es. "aws_instance")
+            resource_name: Full resource name (e.g., "aws_instance.web")
+            resource_type: Resource type (e.g., "aws_instance")
 
         Returns:
-            Nome del nodo TOSCA univoco (es. "aws_instance_web")
+            Unique TOSCA node name (e.g., "aws_instance_web")
         """
-        # Estrai il nome pulito dalla risorsa (rimuovi il prefisso del tipo)
+        # Extract the clean name from the resource (remove the type prefix)
         if "." in resource_name:
             _, clean_name = resource_name.split(".", 1)
         else:
             clean_name = resource_name
 
-        # Pulisci il nome per renderlo un nome di nodo TOSCA valido
-        clean_name = clean_name.replace("-", "_").replace("[", "_").replace("]", "")
+        # Clean the name to make it a valid TOSCA node name
+        clean_name = (
+            clean_name.replace("-", "_")
+            .replace("[", "_")
+            .replace("]", "")
+            .replace('"', "")
+            .replace("'", "")
+            .replace(" ", "_")
+        )
 
-        # Crea il nome composto con il prefisso del tipo di risorsa
+        # Create the compound name with the resource type prefix
         tosca_node_name = f"{resource_type}_{clean_name}"
 
         return tosca_node_name
