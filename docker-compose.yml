@@ -21,9 +21,10 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=eu-west-1
       - LOCALSTACK_HOST=localstack
-    volumes: []
-      # User must specify volumes manually:
-      # docker-compose run --rm -v ./my-input:/app/input -v ./my-output:/app/output retosca
+    volumes:
+      # Automatically mount input and output directories
+      - "${INPUT_DIR:-./input}:/app/input"
+      - "${OUTPUT_DIR:-./output}:/app/output"
       # Note: /app/examples is already included in the Docker image
     working_dir: /app
     # No default command - user must specify what to do
