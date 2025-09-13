@@ -21,7 +21,7 @@ jobs:
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
-          version: 1.8.3
+          version: latest
           virtualenvs-create: true
           virtualenvs-in-project: true
 
@@ -30,12 +30,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}-py311
+          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}-py311-poetry2
 
       - name: Install deps
-        run: |
-          poetry install --no-interaction
-          poetry show black
+        run: poetry install --no-interaction
 
       - name: Ruff (lint)
         run: poetry run ruff check .
@@ -62,7 +60,7 @@ jobs:
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
-          version: 1.8.3
+          version: latest
           virtualenvs-create: true
           virtualenvs-in-project: true
 
@@ -71,7 +69,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}-py${{ matrix.python-version }}
+          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}-py${{ matrix.python-version }}-poetry2
 
       - name: Install deps
         run: poetry install --no-interaction
