@@ -52,7 +52,6 @@ show_usage() {
     echo "  -v, --verbose        Enable verbose logging"
     echo "  -d, --debug          Enable debug logging"
     echo "  --no-validate        Skip TOSCA validation"
-    echo "  --standalone         Use standalone Docker Compose file"
     echo "  --extract-examples   Extract built-in examples to ./examples"
     echo "  --validate-only      Only validate existing TOSCA files in output directory"
     echo "  --shell              Start interactive shell"
@@ -67,7 +66,7 @@ show_usage() {
     echo "  # With verbose logging"
     echo "  $0 -v ./my-terraform-project"
     echo ""
-    echo "  # Extract examples first"
+    echo "  # Extract examples first (auto-downloads docker-compose.yml if missing)"
     echo "  $0 --extract-examples"
     echo ""
     echo "  # Process extracted examples"
@@ -76,6 +75,7 @@ show_usage() {
     echo "  # Validate existing TOSCA files"
     echo "  $0 --validate-only"
     echo ""
+    echo "Note: If docker-compose.yml is missing, the script will auto-download it from GitHub"
 }
 
 # Function to check prerequisites
@@ -91,9 +91,42 @@ check_prerequisites() {
     fi
 }
 
+# Function to auto-download docker-compose file if missing
+ensure_docker_compose_file() {
+    local compose_file="$1"
+
+    if [ ! -f "$compose_file" ]; then
+        echo -e "${YELLOW}⚠️  Docker Compose file '$compose_file' not found${NC}"
+
+        if [ "$compose_file" = "docker-compose.yml" ]; then
+            echo -e "${BLUE}🔄 Downloading docker-compose.yml...${NC}"
+            if command -v curl &> /dev/null; then
+                curl -fsSL -o docker-compose.yml \
+                    "https://raw.githubusercontent.com/xDaryamo/ReTOSCA/master/docker-compose.yml"
+                echo -e "${GREEN}✅ Downloaded docker-compose.yml${NC}"
+            elif command -v wget &> /dev/null; then
+                wget -q -O docker-compose.yml \
+                    "https://raw.githubusercontent.com/xDaryamo/ReTOSCA/master/docker-compose.yml"
+                echo -e "${GREEN}✅ Downloaded docker-compose.yml${NC}"
+            else
+                echo -e "${RED}❌ Neither curl nor wget found. Please download manually:${NC}" >&2
+                echo -e "${YELLOW}   curl -O https://raw.githubusercontent.com/xDaryamo/ReTOSCA/master/docker-compose.yml${NC}" >&2
+                exit 1
+            fi
+        else
+            echo -e "${YELLOW}💡 Please download docker-compose.yml manually:${NC}" >&2
+            echo -e "${YELLOW}   curl -O https://raw.githubusercontent.com/xDaryamo/ReTOSCA/master/docker-compose.yml${NC}" >&2
+            exit 1
+        fi
+    fi
+}
+
 # Function to extract examples
 extract_examples() {
     echo -e "${BLUE}🔄 Extracting built-in examples...${NC}"
+
+    # Ensure we have the Docker Compose file
+    ensure_docker_compose_file "$COMPOSE_FILE"
 
     EXAMPLES_DIR="${EXAMPLES_DIR}" $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm extract-examples
 
@@ -115,6 +148,9 @@ validate_only() {
         exit 1
     fi
 
+    # Ensure we have the Docker Compose file
+    ensure_docker_compose_file "$COMPOSE_FILE"
+
     OUTPUT_DIR="$OUTPUT_DIR" $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm validate
 }
 
@@ -123,11 +159,10 @@ start_shell() {
     echo -e "${BLUE}🐚 Starting interactive shell...${NC}"
     echo -e "${YELLOW}💡 Use 'python -m src.main --help' for ReTOSCA commands${NC}"
 
-    if [ "$COMPOSE_FILE" = "docker-compose-standalone.yml" ]; then
-        TERRAFORM_DIR="${TERRAFORM_DIR:-./terraform}" OUTPUT_DIR="$OUTPUT_DIR" $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm shell
-    else
-        $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm retosca bash
-    fi
+    # Ensure we have the Docker Compose file
+    ensure_docker_compose_file "$COMPOSE_FILE"
+
+    TERRAFORM_DIR="${TERRAFORM_DIR:-./terraform}" OUTPUT_DIR="$OUTPUT_DIR" $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm shell
 }
 
 # Function to run ReTOSCA
@@ -149,6 +184,9 @@ run_retosca() {
 
     # Create output directory
     mkdir -p "$(dirname "$output_file")"
+
+    # Ensure we have the Docker Compose file
+    ensure_docker_compose_file "$COMPOSE_FILE"
 
     echo -e "${BLUE}🔄 Processing Terraform configuration...${NC}"
     echo -e "  📁 Source: $terraform_dir"
@@ -172,17 +210,8 @@ run_retosca() {
     cmd_args+=("output/$(basename "$output_file")")
 
     # Run ReTOSCA
-    if [ "$COMPOSE_FILE" = "docker-compose-standalone.yml" ]; then
-        # Standalone version with automatic volume mounting
-        TERRAFORM_DIR="$terraform_dir" OUTPUT_DIR="$(dirname "$output_file")" \
-            $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm retosca "${cmd_args[@]}"
-    else
-        # Regular version with manual volume mounting
-        $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm \
-            -v "$(realpath "$terraform_dir"):/app/input:ro" \
-            -v "$(realpath "$(dirname "$output_file")"):/app/output" \
-            retosca "${cmd_args[@]}"
-    fi
+    TERRAFORM_DIR="$terraform_dir" OUTPUT_DIR="$(dirname "$output_file")" \
+        $DOCKER_COMPOSE -f "$COMPOSE_FILE" run --rm retosca "${cmd_args[@]}"
 
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ TOSCA file generated successfully: $output_file${NC}"
@@ -213,10 +242,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-validate)
             VALIDATE=false
-            shift
-            ;;
-        --standalone)
-            COMPOSE_FILE="docker-compose-standalone.yml"
             shift
             ;;
         --extract-examples)
