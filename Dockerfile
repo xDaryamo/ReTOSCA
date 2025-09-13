@@ -55,9 +55,8 @@ COPY . .
 # Make scripts executable
 RUN chmod +x scripts/test-tosca.sh
 
-# Verify examples directory was copied and create default directories
-RUN mkdir -p /app/input /app/output \
-    && echo "=== Checking examples directory ===" \
+# Verify examples directory was copied
+RUN echo "=== Checking examples directory ===" \
     && ls -la /app/ | grep examples || echo "WARNING: examples directory not found in /app/" \
     && if [ -d "/app/examples" ]; then \
          echo "✅ Examples directory found with contents:"; \
