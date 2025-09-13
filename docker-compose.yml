@@ -37,5 +37,13 @@ services:
       - "${OUTPUT_DIR:-./output}:/app/tosca:ro"
     entrypoint: ["/app/scripts/test-tosca.sh"]
 
+  extract-examples:
+    image: xdaryamo/retosca:latest
+    volumes:
+      # Mount local directory where examples will be copied
+      - "${EXAMPLES_DIR:-./examples}:/app/local-examples"
+    entrypoint: ["sh", "-c"]
+    command: ["cp -r /app/examples/* /app/local-examples/ && echo '✅ Examples extracted to local directory!' && ls -la /app/local-examples/"]
+
 volumes:
   localstack_data:
