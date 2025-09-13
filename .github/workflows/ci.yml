@@ -92,6 +92,14 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           file: ./pytest.xml
 
+      - name: Upload coverage reports to Codecov
+        if: ${{ !cancelled() && matrix.python-version == '3.11' }}  # Upload only once
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
   docker:
     name: Push Docker image to Docker Hub
     needs: [lint, test]
