@@ -23,7 +23,7 @@ services:
       - LOCALSTACK_HOST=localstack
     volumes:
       # Mount solo le directory necessarie per input/output
-      - ./examples:/app/examples:ro  # readonly examples
+      - ./examples:/app/examples     # examples (writable for terraform)
       - ./output:/app/output         # output directory
     entrypoint: ["python", "-m", "src.main"]
 
@@ -32,7 +32,6 @@ services:
     volumes:
       # Mount solo directory con file TOSCA da validare
       - ./examples:/app/examples:ro
-      - ./tosca_types:/app/tosca_types:ro
     entrypoint: ["/app/scripts/test-tosca.sh"]
 
 volumes:
