@@ -49,17 +49,21 @@ RUN poetry config virtualenvs.create false \
 # Set final working directory
 WORKDIR /app
 
-# Copy the project
+# Copy the project (includes examples, scripts, src, etc.)
 COPY . .
 
 # Make scripts executable
 RUN chmod +x scripts/test-tosca.sh
 
-# Copy all examples to make them available in the image
-# This allows users to run the image without mounting local examples
-COPY examples/ /app/examples/
-
-# Create default directories for user convenience
-RUN mkdir -p /app/input /app/output
+# Verify examples directory was copied and create default directories
+RUN mkdir -p /app/input /app/output \
+    && echo "=== Checking examples directory ===" \
+    && ls -la /app/ | grep examples || echo "WARNING: examples directory not found in /app/" \
+    && if [ -d "/app/examples" ]; then \
+         echo "✅ Examples directory found with contents:"; \
+         find /app/examples -name "*.tf" | head -5; \
+       else \
+         echo "❌ Examples directory missing!"; \
+       fi
 
 # No default entrypoint - let docker-compose or user specify the command
