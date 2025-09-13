@@ -33,8 +33,7 @@ jobs:
           key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}-py311
 
       - name: Install deps
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction --no-root
+        run: poetry install --no-interaction
 
       - name: Ruff (lint)
         run: poetry run ruff check .
@@ -73,8 +72,7 @@ jobs:
           key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}-py${{ matrix.python-version }}
 
       - name: Install deps
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        run: poetry install --no-interaction --no-root
+        run: poetry install --no-interaction
 
       - name: Pytest (coverage)
         run: |
