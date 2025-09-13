@@ -75,8 +75,7 @@ class PluginRegistry:
             available_types = list(self._plugins.keys())
             available_str = ", ".join(available_types) if available_types else "none"
             raise ValueError(
-                f"Unknown plugin type '{plugin_type}'. "
-                f"Available types: {available_str}"
+                f"Unknown plugin type '{plugin_type}'. Available types: {available_str}"
             )
 
         return self._plugins[plugin_type]
