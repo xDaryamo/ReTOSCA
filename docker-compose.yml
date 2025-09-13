@@ -22,16 +22,19 @@ services:
       - AWS_DEFAULT_REGION=eu-west-1
       - LOCALSTACK_HOST=localstack
     volumes:
-      # Mount solo le directory necessarie per input/output
-      - ./examples:/app/examples     # examples (writable for terraform)
-      - ./output:/app/output         # output directory
+      # Mount only user-provided input/output directories
+      - "${INPUT_DIR:-./input}:/app/input"     # User provides input directory
+      - "${OUTPUT_DIR:-./output}:/app/output"  # User provides output directory
+      # Note: /app/examples is already included in the Docker image
+    working_dir: /app
+    # No default command - user must specify what to do
     entrypoint: ["python", "-m", "src.main"]
 
   validate:
     image: xdaryamo/retosca:latest
     volumes:
-      # Mount solo directory con file TOSCA da validare
-      - ./examples:/app/examples:ro
+      # Mount directory with TOSCA files to validate
+      - "${OUTPUT_DIR:-./output}:/app/tosca:ro"
     entrypoint: ["/app/scripts/test-tosca.sh"]
 
 volumes:

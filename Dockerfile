@@ -55,5 +55,11 @@ COPY . .
 # Make scripts executable
 RUN chmod +x scripts/test-tosca.sh
 
-# Entrypoint CLI
-ENTRYPOINT ["python", "-m", "src.main"]
+# Copy all examples to make them available in the image
+# This allows users to run the image without mounting local examples
+COPY examples/ /app/examples/
+
+# Create default directories for user convenience
+RUN mkdir -p /app/input /app/output
+
+# No default entrypoint - let docker-compose or user specify the command
