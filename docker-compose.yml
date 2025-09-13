@@ -12,7 +12,7 @@ services:
       - "localstack_data:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
 
-  app:
+  retosca:
     image: xdaryamo/retosca:latest
     depends_on:
       - localstack
@@ -21,10 +21,9 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=eu-west-1
       - LOCALSTACK_HOST=localstack
-    volumes:
-      # Mount only user-provided input/output directories
-      - "${INPUT_DIR:-./input}:/app/input"     # User provides input directory
-      - "${OUTPUT_DIR:-./output}:/app/output"  # User provides output directory
+    volumes: []
+      # User must specify volumes manually:
+      # docker-compose run --rm -v ./my-input:/app/input -v ./my-output:/app/output retosca
       # Note: /app/examples is already included in the Docker image
     working_dir: /app
     # No default command - user must specify what to do
