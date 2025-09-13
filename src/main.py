@@ -1,7 +1,7 @@
 """
 Command-line interface for translating Terraform configurations to TOSCA 2.0 models.
 
-This module provides a user-friendly CLI for the tosca-intent-discovery tool.
+This module provides a user-friendly CLI for the ReTOSCA tool.
 """
 
 import argparse
