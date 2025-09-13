@@ -95,6 +95,7 @@ jobs:
     name: Push Docker image to Docker Hub
     needs: [lint, test]
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     permissions:
       packages: write
       contents: read
@@ -116,8 +117,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKER_USERNAME }}/retosca
           tags: |
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
 
       - name: Build and push Docker image
         id: push
