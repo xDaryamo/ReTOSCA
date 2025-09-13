@@ -25,15 +25,17 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
 
-      - name: Cache venv
-        id: cache-venv
+      - name: Load cached venv
+        id: cached-poetry-dependencies
         uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}-py311
 
       - name: Install deps
-        run: poetry install --no-interaction
+        run: |
+          poetry install --no-interaction
+          poetry show black
 
       - name: Ruff (lint)
         run: poetry run ruff check .
@@ -64,8 +66,8 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
 
-      - name: Cache venv
-        id: cache-venv
+      - name: Load cached venv
+        id: cached-poetry-dependencies
         uses: actions/cache@v4
         with:
           path: .venv
