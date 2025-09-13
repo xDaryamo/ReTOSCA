@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "tosca-intent-discovery"
+name = "retosca"
 version = "0.1.0"
-description = "Infrastructure Intent Discovery via TOSCA-based Reverse Engineering"
+description = "ReTOSCA - Reverse Engineering to TOSCA. Infrastructure Intent Discovery via TOSCA-based Reverse Engineering"
 authors = ["xDaryamo <mr.dario.mazza@gmail.com>"]
 readme = "README.md"
 packages = [
