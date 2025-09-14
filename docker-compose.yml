@@ -90,7 +90,7 @@ services:
       - AWS_DEFAULT_REGION=eu-west-1
       - LOCALSTACK_HOST=localstack
     volumes:
-      - "${TERRAFORM_DIR:-./terraform}:/app/input:ro"
+      - "${TERRAFORM_DIR:-./terraform}:/app/input"
       - "${OUTPUT_DIR:-./output}:/app/output"
     working_dir: /app
     entrypoint: ["/bin/bash"]
