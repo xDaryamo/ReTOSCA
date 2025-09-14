@@ -49,7 +49,7 @@ RUN poetry config virtualenvs.create false \
 # Set final working directory
 WORKDIR /app
 
-# Copy the project (includes examples, scripts, src, etc.)
+# Copy the project
 COPY . .
 
 # Make scripts executable

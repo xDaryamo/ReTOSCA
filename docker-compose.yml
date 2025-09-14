@@ -1,97 +1,57 @@
-# ReTOSCA Docker Compose
-# Download this file and run: docker compose up
-#
-# Prerequisites: Docker and Docker Compose installed
-# No repository cloning required!
-
 services:
-  # LocalStack - AWS services emulation
   localstack:
-    image: localstack/localstack:latest
     container_name: retosca-localstack
+    image: localstack/localstack:latest
     ports:
-      - "4566:4566"  # LocalStack edge port
+      - "4566:4566"  # LocalStack Gateway
+      - "4510-4559:4510-4559"  # External services port range
     environment:
+      # LocalStack configuration
+      - SERVICES=s3,ec2,iam,lambda,apigateway,dynamodb,cloudformation,sts
+      - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - PERSISTENCE=0
+      - LAMBDA_EXECUTOR=local
+      - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=eu-west-1
-      - SERVICES=s3,ec2,iam,lambda,apigateway,dynamodb,rds,vpc,cloudformation
+      # Use volume instead of host tmp folder to avoid permission issues
+      - LOCALSTACK_VOLUME_DIR=/var/lib/localstack
     volumes:
-      - "retosca_localstack_data:/var/lib/localstack"
+      - "localstack-data:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
+    networks:
+      - retosca-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
-  # Main ReTOSCA application
   retosca:
-    image: xdaryamo/retosca:latest
     container_name: retosca-app
+    image: xdaryamo/retosca:latest
     depends_on:
       localstack:
         condition: service_healthy
     environment:
+      # AWS configuration for LocalStack
+      - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=eu-west-1
-      - LOCALSTACK_HOST=localstack
-    volumes:
-      # Mount your Terraform files here
-      - "${TERRAFORM_DIR:-./terraform}:/app/input"
-      # Generated TOSCA files will appear here
-      - "${OUTPUT_DIR:-./output}:/app/output"
-    working_dir: /app
-    # No default command - use the run script or specify manually
-    # Example: docker compose run retosca --source terraform:input output/result.yaml
-    entrypoint: ["python", "-m", "src.main"]
-
-  # Validate generated TOSCA files
-  validate:
-    image: xdaryamo/retosca:latest
-    container_name: retosca-validate
-    volumes:
-      # Mount directory containing TOSCA files to validate
-      - "${OUTPUT_DIR:-./output}:/app/tosca:ro"
-    entrypoint: ["/app/scripts/test-tosca.sh"]
-
-  # Interactive shell for advanced usage
-  shell:
-    image: xdaryamo/retosca:latest
-    container_name: retosca-shell
-    depends_on:
-      localstack:
-        condition: service_healthy
-    environment:
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=eu-west-1
-      - LOCALSTACK_HOST=localstack
-    volumes:
-      - "${TERRAFORM_DIR:-./terraform}:/app/input"
-      - "${OUTPUT_DIR:-./output}:/app/output"
-    working_dir: /app
-    entrypoint: ["/bin/bash"]
-    stdin_open: true
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      # Terraform LocalStack configuration
+      - TF_VAR_endpoint_url=http://localstack:4566
+    networks:
+      - retosca-network
+    # Keep container running for manual execution
     tty: true
+    stdin_open: true
+
+networks:
+  retosca-network:
+    driver: bridge
 
 volumes:
-  retosca_localstack_data:
-    driver: local
-
-# Usage Examples:
-# 1. Process your Terraform files:
-#    TERRAFORM_DIR=/path/to/your/terraform docker compose run --rm retosca --source terraform:input output/result.yaml
-#
-# 2. Fix file ownership (if needed):
-#    sudo chown -R $USER:$USER output/
-#
-# 3. Validate generated TOSCA:
-#    docker compose run --rm validate
-#
-# 4. Interactive shell:
-#    docker compose run --rm shell
-#
-# 5. Start LocalStack (for debugging):
-#    docker compose up localstack
+  localstack-data:

@@ -1,75 +1,75 @@
 # Git
 .git
 .gitignore
+.gitattributes
 
 # Python
-__pycache__
-*.pyc
-*.pyo
-*.pyd
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 .Python
-env
-pip-log.txt
-pip-delete-this-directory.txt
-.tox
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
 .venv
-.pytest_cache
-
-# Terraform
-**/.terraform/
-**/.terraform/**
-*.tfstate
-*.tfstate.*
-.terraform.lock.hcl
-**/*.tfstate
-**/*.tfstate.*
-**/.terraform.lock.hcl
-
-# Documentation
-README.md
-CLAUDE.md
-TOSCA-v2.0.md
-
-# Test outputs
-htmlcov/
-output/
-tests/
-
-# Large directories that can slow build
-node_modules/
-.venv/
+env/
 venv/
-**/__pycache__/
-**/node_modules/
-**/.venv/
-**/venv/
+ENV/
+env.bak/
+venv.bak/
 
-# Terraform provider cache (can be huge)
-**/.terraform/providers/
-**/terraform.d/
-**/.terraformrc
-
-# Explicitly exclude large example directories
-examples/*/.terraform/
-examples/*/*/.terraform/
-examples/*/*/*/.terraform/
+# Testing
+.coverage
+.pytest_cache/
+.mypy_cache/
+.tox/
+.nox/
+htmlcov/
+.cache
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# OS
+# Local development
 .DS_Store
-Thumbs.db
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Project specific
+examples/
+output/
+volume/
+.claude/
+*.log
+node_modules/
 
 # Docker
-docker-compose.yml
-Dockerfile
 .dockerignore
+Dockerfile
+docker-compose*.yml
+
+# Documentation (keep README.md)
+CLAUDE.md
