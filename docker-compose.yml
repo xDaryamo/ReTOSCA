@@ -39,7 +39,7 @@ services:
       - LOCALSTACK_HOST=localstack
     volumes:
       # Mount your Terraform files here
-      - "${TERRAFORM_DIR:-./terraform}:/app/input:ro"
+      - "${TERRAFORM_DIR:-./terraform}:/app/input"
       # Generated TOSCA files will appear here
       - "${OUTPUT_DIR:-./output}:/app/output"
       # Examples from the image (writable for tflocal temporary files)
