@@ -1,5 +1,5 @@
-# ReTOSCA Standalone Docker Compose
-# Download this file and run: docker compose -f docker-compose-standalone.yml up
+# ReTOSCA Docker Compose
+# Download this file and run: docker compose up
 #
 # Prerequisites: Docker and Docker Compose installed
 # No repository cloning required!
@@ -42,11 +42,11 @@ services:
       - "${TERRAFORM_DIR:-./terraform}:/app/input:ro"
       # Generated TOSCA files will appear here
       - "${OUTPUT_DIR:-./output}:/app/output"
-      # Examples from the image (read-only)
-      - "retosca_examples:/app/examples:ro"
+      # Examples from the image (writable for tflocal temporary files)
+      - "retosca_examples:/app/examples"
     working_dir: /app
     # No default command - use the run script or specify manually
-    # Example: docker compose -f docker-compose-standalone.yml run retosca --source terraform:input output/result.yaml
+    # Example: docker compose run retosca --source terraform:input output/result.yaml
     entrypoint: ["python", "-m", "src.main"]
 
   # Extract built-in examples to your local machine
@@ -105,16 +105,16 @@ volumes:
 
 # Usage Examples:
 # 1. Extract examples:
-#    docker compose -f docker-compose-standalone.yml run --rm extract-examples
+#    docker compose run --rm extract-examples
 #
 # 2. Process your Terraform files:
-#    TERRAFORM_DIR=/path/to/your/terraform docker compose -f docker-compose-standalone.yml run --rm retosca --source terraform:input output/result.yaml
+#    TERRAFORM_DIR=/path/to/your/terraform docker compose run --rm retosca --source terraform:input output/result.yaml
 #
 # 3. Validate generated TOSCA:
-#    docker compose -f docker-compose-standalone.yml run --rm validate
+#    docker compose run --rm validate
 #
 # 4. Interactive shell:
-#    docker compose -f docker-compose-standalone.yml run --rm shell
+#    docker compose run --rm shell
 #
 # 5. Start LocalStack (for debugging):
-#    docker compose -f docker-compose-standalone.yml up localstack
+#    docker compose up localstack
