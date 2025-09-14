@@ -42,31 +42,10 @@ services:
       - "${TERRAFORM_DIR:-./terraform}:/app/input"
       # Generated TOSCA files will appear here
       - "${OUTPUT_DIR:-./output}:/app/output"
-      # Examples from the image (writable for tflocal temporary files)
-      - "retosca_examples:/app/examples"
     working_dir: /app
     # No default command - use the run script or specify manually
     # Example: docker compose run retosca --source terraform:input output/result.yaml
     entrypoint: ["python", "-m", "src.main"]
-
-  # Extract built-in examples to your local machine
-  extract-examples:
-    image: xdaryamo/retosca:latest
-    container_name: retosca-examples
-    volumes:
-      # Examples will be copied to this directory
-      - "${EXAMPLES_DIR:-./examples}:/app/local-examples"
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        echo "🔄 Extracting examples to local directory..."
-        cp -r /app/examples/* /app/local-examples/ 2>/dev/null || echo "ℹ️  Some examples may not be accessible"
-        echo "✅ Examples extracted! Check your examples directory."
-        echo "📁 Available examples:"
-        find /app/local-examples -name "*.tf" | head -10
-        if [ $(find /app/local-examples -name "*.tf" | wc -l) -gt 10 ]; then
-          echo "   ... and more"
-        fi
 
   # Validate generated TOSCA files
   validate:
@@ -100,15 +79,13 @@ services:
 volumes:
   retosca_localstack_data:
     driver: local
-  retosca_examples:
-    driver: local
 
 # Usage Examples:
-# 1. Extract examples:
-#    docker compose run --rm extract-examples
-#
-# 2. Process your Terraform files:
+# 1. Process your Terraform files:
 #    TERRAFORM_DIR=/path/to/your/terraform docker compose run --rm retosca --source terraform:input output/result.yaml
+#
+# 2. Fix file ownership (if needed):
+#    sudo chown -R $USER:$USER output/
 #
 # 3. Validate generated TOSCA:
 #    docker compose run --rm validate

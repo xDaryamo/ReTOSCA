@@ -55,14 +55,4 @@ COPY . .
 # Make scripts executable
 RUN chmod +x scripts/test-tosca.sh
 
-# Verify examples directory was copied
-RUN echo "=== Checking examples directory ===" \
-    && ls -la /app/ | grep examples || echo "WARNING: examples directory not found in /app/" \
-    && if [ -d "/app/examples" ]; then \
-         echo "✅ Examples directory found with contents:"; \
-         find /app/examples -name "*.tf" | head -5; \
-       else \
-         echo "❌ Examples directory missing!"; \
-       fi
-
 # No default entrypoint - let docker-compose or user specify the command
