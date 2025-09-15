@@ -19,9 +19,7 @@ services:
       start_period: 10s
 
   retosca:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: xdaryamo/retosca:latest
     container_name: retosca
     depends_on:
       localstack:
