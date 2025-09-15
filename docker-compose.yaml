@@ -1,0 +1,48 @@
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,ec2,iam,lambda,apigateway,dynamodb,cloudformation,sts
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
+      - DEBUG=${DEBUG:-0}
+      - PERSISTENCE=${PERSISTENCE:-0}
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  retosca:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: retosca
+    depends_on:
+      localstack:
+        condition: service_healthy
+  # Mounts passed at runtime via environment variables:
+    volumes:
+      - ${INPUT_DIR:?devi impostare INPUT_DIR}:/work/input
+      - ${OUTPUT_DIR:?devi impostare OUTPUT_DIR}:/work/output
+    working_dir: /work
+    environment:
+      - PYTHONPATH=/app
+      - S3_HOSTNAME=localstack
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - TF_VAR_endpoint_url=http://localstack:4566
+  # No default command: this way you can decide what to run each time
+    tty: true
+    stdin_open: true
+    user: "${UID:-1000}:${GID:-1000}"
+
+volumes:
+  localstack-data:
