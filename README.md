@@ -30,13 +30,38 @@ ReTOSCA uses a **plugin-based architecture** with a multi-phase pipeline approac
 
 ## 🚀 Usage
 
+### Quick Start with Examples
+
+```bash
+# Download specific example configurations to test
+
+# Simple S3 bucket example
+mkdir -p examples/basic/aws_s3_bucket
+curl -L https://raw.githubusercontent.com/your-repo/ReTOSCA/master/examples/basic/aws_s3_bucket/main.tf -o examples/basic/aws_s3_bucket/main.tf
+
+# EC2 instance example
+mkdir -p examples/basic/aws_instance
+curl -L https://raw.githubusercontent.com/your-repo/ReTOSCA/master/examples/basic/aws_instance/main.tf -o examples/basic/aws_instance/main.tf
+
+# Complex MVC example
+mkdir -p examples/mvc
+curl -L https://raw.githubusercontent.com/your-repo/ReTOSCA/master/examples/mvc/main.tf -o examples/mvc/main.tf
+
+# Or clone the full repository for all examples
+git clone https://github.com/your-repo/ReTOSCA.git
+cd ReTOSCA
+```
+
 ### Docker (Recommended)
 
 ```bash
 # Download docker-compose.yaml
 curl -O https://raw.githubusercontent.com/your-repo/ReTOSCA/master/docker-compose.yaml
 
-# Run with your Terraform files
+# Run with downloaded examples
+INPUT_DIR="$PWD/examples/basic/aws_s3_bucket" OUTPUT_DIR="$PWD/output" docker compose run --rm retosca python -m src.main --source "terraform:/work/input" /work/output/model.yaml
+
+# Run with your own Terraform files
 INPUT_DIR="/path/to/your/terraform" OUTPUT_DIR="/path/to/output" docker compose run --rm retosca python -m src.main --source "terraform:/work/input" /work/output/model.yaml
 ```
 
@@ -48,7 +73,11 @@ git clone <repository-url>
 cd ReTOSCA
 poetry install
 
-# Run with your Terraform
+# Run with included examples
+poetry run python -m src.main --source terraform:examples/basic/aws_s3_bucket output/s3_model.yaml
+poetry run python -m src.main --source terraform:examples/mvc output/mvc_model.yaml
+
+# Run with your own Terraform
 poetry run python -m src.main --source terraform:/path/to/terraform/directory output/model.yaml
 ```
 
