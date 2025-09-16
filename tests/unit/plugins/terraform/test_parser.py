@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.plugins.terraform.parser import TerraformParser
+from src.plugins.provisioning.terraform.parser import TerraformParser
 
 
 @pytest.fixture

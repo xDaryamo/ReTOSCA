@@ -131,7 +131,7 @@ class TerraformMappingContext:
 
         # Resolve references to actual TOSCA node names and deduplicate
         resolved_references = []
-        seen_targets = set()
+        seen_references = set()
 
         for prop_name, target_ref, relationship_type in references:
             # Check if this is a variable reference
@@ -142,22 +142,25 @@ class TerraformMappingContext:
             )
             if is_variable_ref:
                 # For variable/data references, keep the original reference string
-                if target_ref not in seen_targets:
+                reference_key = (prop_name, target_ref)
+                if reference_key not in seen_references:
                     resolved_references.append(
                         (prop_name, target_ref, relationship_type)
                     )
-                    seen_targets.add(target_ref)
+                    seen_references.add(reference_key)
             else:
                 # For resource references, resolve to TOSCA node name
                 tosca_target = self.resolve_array_reference_with_context(
                     resource_data, target_ref
                 )
 
-                if tosca_target and tosca_target not in seen_targets:
-                    resolved_references.append(
-                        (prop_name, tosca_target, relationship_type)
-                    )
-                    seen_targets.add(tosca_target)
+                if tosca_target:
+                    reference_key = (prop_name, tosca_target)
+                    if reference_key not in seen_references:
+                        resolved_references.append(
+                            (prop_name, tosca_target, relationship_type)
+                        )
+                        seen_references.add(reference_key)
 
         # Add synthetic dependencies if specified
         if dependency_filter and dependency_filter.synthetic_dependencies:
@@ -170,11 +173,13 @@ class TerraformMappingContext:
                 tosca_target = self.resolve_array_reference_with_context(
                     resource_data, target_ref
                 )
-                if tosca_target and tosca_target not in seen_targets:
-                    resolved_references.append(
-                        (prop_name, tosca_target, relationship_type)
-                    )
-                    seen_targets.add(tosca_target)
+                if tosca_target:
+                    reference_key = (prop_name, tosca_target)
+                    if reference_key not in seen_references:
+                        resolved_references.append(
+                            (prop_name, tosca_target, relationship_type)
+                        )
+                        seen_references.add(reference_key)
 
         return resolved_references
 

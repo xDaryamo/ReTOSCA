@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.context import TerraformMappingContext
-from src.plugins.terraform.mappers.aws.aws_lb import AWSLoadBalancerMapper
+from src.plugins.provisioning.terraform.context import TerraformMappingContext
+from src.plugins.provisioning.terraform.mappers.aws.aws_lb import AWSLoadBalancerMapper
 
 
 class FakeReq:

@@ -134,20 +134,34 @@ class AWSRouteMapper(SingleResourceMapper):
             return
 
         # Generate TOSCA node names using context-aware logic
-        if context:
-            route_table_node_name = context.generate_tosca_node_name_from_address(
-                route_table_address, "aws_route_table"
-            )
-            target_node_name = context.generate_tosca_node_name_from_address(
-                target_address, target_type
-            )
+        # If the address is already a TOSCA node name (no dot), use it directly
+        if "." in route_table_address:
+            # Terraform address format, need to convert to TOSCA node name
+            if context:
+                route_table_node_name = context.generate_tosca_node_name_from_address(
+                    route_table_address, "aws_route_table"
+                )
+            else:
+                route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    route_table_address, "aws_route_table"
+                )
         else:
-            route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
-                route_table_address, "aws_route_table"
-            )
-            target_node_name = BaseResourceMapper.generate_tosca_node_name(
-                target_address, target_type
-            )
+            # Already a TOSCA node name
+            route_table_node_name = route_table_address
+
+        if "." in target_address:
+            # Terraform address format, need to convert to TOSCA node name
+            if context:
+                target_node_name = context.generate_tosca_node_name_from_address(
+                    target_address, target_type
+                )
+            else:
+                target_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    target_address, target_type
+                )
+        else:
+            # Already a TOSCA node name
+            target_node_name = target_address
 
         # Find the route table node in the builder
         route_table_node = self._find_node_in_builder(builder, route_table_node_name)
@@ -241,6 +255,9 @@ class AWSRouteMapper(SingleResourceMapper):
         """
         # Extract all Terraform references using context
         terraform_refs = context.extract_terraform_references(resource_data)
+        logger.debug(
+            f"Route extracted {len(terraform_refs)} references: {terraform_refs}"
+        )
 
         route_table_address = None
         target_address = None
@@ -248,21 +265,68 @@ class AWSRouteMapper(SingleResourceMapper):
 
         # Process each reference to find route table and target
         for prop_name, target_ref, _ in terraform_refs:
+            logger.debug(f"Route processing reference: {prop_name} -> {target_ref}")
+
+            # Handle both raw Terraform addresses (aws_subnet.public_a) and TOSCA node
+            # names (aws_subnet_public_a)
             if "." in target_ref:
+                # Raw Terraform address format
                 target_resource_type = target_ref.split(".", 1)[0]
+            else:
+                # TOSCA node name format - extract type prefix
+                # Convert aws_subnet_public_a -> aws_subnet,
+                # aws_route_table_public -> aws_route_table
+                if "_" in target_ref:
+                    parts = target_ref.split("_")
+                    if len(parts) >= 2 and parts[0] == "aws":
+                        # Handle special cases for compound resource types
+                        if len(parts) >= 3 and "_".join(parts[:3]) in [
+                            "aws_route_table",
+                            "aws_internet_gateway",
+                            "aws_egress_only",  # for aws_egress_only_internet_gateway
+                            "aws_nat_gateway",
+                            "aws_vpn_gateway",
+                            "aws_db_instance",
+                            "aws_db_subnet",
+                            "aws_lb_target",
+                        ]:
+                            target_resource_type = "_".join(parts[:3])
+                        # Handle more complex compound types
+                        elif len(parts) >= 4 and "_".join(parts[:4]) in [
+                            "aws_egress_only_internet",
+                        ]:
+                            target_resource_type = "_".join(parts[:4])
+                        elif len(parts) >= 5 and "_".join(parts[:5]) in [
+                            "aws_egress_only_internet_gateway",
+                            "aws_lb_target_group_attachment",
+                        ]:
+                            target_resource_type = "_".join(parts[:5])
+                        else:
+                            # Default: aws_<resource_type>
+                            target_resource_type = f"{parts[0]}_{parts[1]}"
+                    else:
+                        target_resource_type = target_ref
+                else:
+                    target_resource_type = target_ref
 
-                # Check for route table reference
-                if (
-                    prop_name == "route_table_id"
-                    and target_resource_type == "aws_route_table"
-                ):
-                    route_table_address = target_ref
+            logger.debug(f"Route target resource type: {target_resource_type}")
 
-                # Check for various target types
-                elif prop_name in self._get_target_property_names():
-                    if target_resource_type in self._get_supported_target_types():
-                        target_address = target_ref
-                        target_type = target_resource_type
+            # Check for route table reference
+            if (
+                prop_name == "route_table_id"
+                and target_resource_type == "aws_route_table"
+            ):
+                route_table_address = target_ref
+                logger.debug(f"Found route table reference: {route_table_address}")
+
+            # Check for various target types
+            elif prop_name in self._get_target_property_names():
+                if target_resource_type in self._get_supported_target_types():
+                    target_address = target_ref
+                    target_type = target_resource_type
+                    logger.debug(
+                        f"Found target reference: {target_address} ({target_type})"
+                    )
 
         # If we couldn't find references from configuration, try to map using
         # state data with concrete IDs

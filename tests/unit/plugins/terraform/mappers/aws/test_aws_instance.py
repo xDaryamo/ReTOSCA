@@ -5,7 +5,9 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_instance import AWSInstanceMapper
+from src.plugins.provisioning.terraform.mappers.aws.aws_instance import (
+    AWSInstanceMapper,
+)
 
 
 class FakeCap:

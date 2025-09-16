@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from src.core.common.base_mapper import BaseResourceMapper
-from src.plugins.terraform.mappers.aws.aws_vpc_ipv4_cidr_block_association import (
+from src.plugins.provisioning.terraform.mappers.aws.aws_vpc_ipv4_cidr_block_association import (  # noqa: E501
     AWSVPCIpv4CidrBlockAssociationMapper,
 )
 

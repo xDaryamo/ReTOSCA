@@ -1,7 +1,7 @@
 # tests/test_aws_elasticache_cluster_mapper.py
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_elasticache_cluster import (
+from src.plugins.provisioning.terraform.mappers.aws.aws_elasticache_cluster import (
     AWSElastiCacheClusterMapper,
 )
 

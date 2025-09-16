@@ -4,14 +4,14 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mapper import TerraformMapper
-from src.plugins.terraform.mappers.aws.aws_security_group import (
+from src.plugins.provisioning.terraform.mapper import TerraformMapper
+from src.plugins.provisioning.terraform.mappers.aws.aws_security_group import (
     AWSSecurityGroupMapper,
 )
-from src.plugins.terraform.mappers.aws.aws_vpc_security_group_egress_rule import (
+from src.plugins.provisioning.terraform.mappers.aws.aws_vpc_security_group_egress_rule import (  # noqa: E501
     AWSVPCSecurityGroupEgressRuleMapper,
 )
-from src.plugins.terraform.mappers.aws.aws_vpc_security_group_ingress_rule import (
+from src.plugins.provisioning.terraform.mappers.aws.aws_vpc_security_group_ingress_rule import (  # noqa: E501
     AWSVPCSecurityGroupIngressRuleMapper,
 )
 
@@ -120,7 +120,7 @@ class Harness(TerraformMapper):
         """
         Process a single resource using the appropriate mapper with proper context.
         """
-        from src.plugins.terraform.context import TerraformMappingContext
+        from src.plugins.provisioning.terraform.context import TerraformMappingContext
 
         mapper_strategy = self._mappers.get(resource_type)
 

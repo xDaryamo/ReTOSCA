@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from src.plugins.terraform.context import (
+from src.plugins.provisioning.terraform.context import (
     DependencyFilter,
     TerraformMappingContext,
 )
-from src.plugins.terraform.variables import VariableContext
+from src.plugins.provisioning.terraform.variables import VariableContext
 
 # ---------------------------------------------------------------------------
 # Fixture: parsed_data completo per testare:

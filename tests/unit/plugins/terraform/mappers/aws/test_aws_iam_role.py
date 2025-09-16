@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_iam_role import (
+from src.plugins.provisioning.terraform.mappers.aws.aws_iam_role import (
     AWSIAMRoleMapper,
 )
 

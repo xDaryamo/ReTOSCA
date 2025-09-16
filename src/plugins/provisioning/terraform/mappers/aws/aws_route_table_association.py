@@ -86,14 +86,20 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             return
 
         # Generate TOSCA node names using context-aware logic
-        if context:
-            route_table_node_name = context.generate_tosca_node_name_from_address(
-                route_table_address, "aws_route_table"
-            )
+        # If the address is already a TOSCA node name (no dot), use it directly
+        if "." in route_table_address:
+            # Terraform address format, need to convert to TOSCA node name
+            if context:
+                route_table_node_name = context.generate_tosca_node_name_from_address(
+                    route_table_address, "aws_route_table"
+                )
+            else:
+                route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    route_table_address, "aws_route_table"
+                )
         else:
-            route_table_node_name = BaseResourceMapper.generate_tosca_node_name(
-                route_table_address, "aws_route_table"
-            )
+            # Already a TOSCA node name
+            route_table_node_name = route_table_address
 
         # Process subnet association
         if subnet_address:
@@ -125,29 +131,77 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
 
         # First try to extract from Terraform references (plan JSON)
         terraform_refs = context.extract_terraform_references(resource_data)
+        logger.debug(f"Extracted {len(terraform_refs)} references: {terraform_refs}")
+
         for prop_name, target_ref, _relationship_type in terraform_refs:
+            logger.debug(f"Processing reference: {prop_name} -> {target_ref}")
+
+            # Handle both raw Terraform addresses (aws_subnet.public_a) and
+            # TOSCA node names (aws_subnet_public_a)
             if "." in target_ref:
+                # Raw Terraform address format
                 target_resource_type = target_ref.split(".", 1)[0]
+            else:
+                # TOSCA node name format - extract type prefix
+                # Convert aws_subnet_public_a -> aws_subnet,
+                # aws_route_table_public -> aws_route_table
+                if "_" in target_ref:
+                    parts = target_ref.split("_")
+                    if len(parts) >= 2 and parts[0] == "aws":
+                        # Handle special cases for compound resource types
+                        if len(parts) >= 3 and "_".join(parts[:3]) in [
+                            "aws_route_table",
+                            "aws_internet_gateway",
+                            "aws_egress_only",  # for aws_egress_only_internet_gateway
+                            "aws_nat_gateway",
+                            "aws_vpn_gateway",
+                            "aws_db_instance",
+                            "aws_db_subnet",
+                            "aws_lb_target",
+                        ]:
+                            target_resource_type = "_".join(parts[:3])
+                        # Handle more complex compound types
+                        elif len(parts) >= 4 and "_".join(parts[:4]) in [
+                            "aws_egress_only_internet",
+                        ]:
+                            target_resource_type = "_".join(parts[:4])
+                        elif len(parts) >= 5 and "_".join(parts[:5]) in [
+                            "aws_egress_only_internet_gateway",
+                            "aws_lb_target_group_attachment",
+                        ]:
+                            target_resource_type = "_".join(parts[:5])
+                        else:
+                            # Default: aws_<resource_type>
+                            target_resource_type = f"{parts[0]}_{parts[1]}"
+                    else:
+                        target_resource_type = target_ref
+                else:
+                    target_resource_type = target_ref
 
-                # Check for subnet reference
-                if prop_name == "subnet_id" and target_resource_type == "aws_subnet":
-                    subnet_address = target_ref
+            logger.debug(f"Target resource type: {target_resource_type}")
 
-                # Check for gateway reference
-                elif prop_name == "gateway_id" and target_resource_type in [
-                    "aws_internet_gateway",
-                    "aws_egress_only_internet_gateway",
-                    "aws_vpn_gateway",
-                    "aws_nat_gateway",
-                ]:
-                    gateway_address = target_ref
+            # Check for subnet reference
+            if prop_name == "subnet_id" and target_resource_type == "aws_subnet":
+                subnet_address = target_ref
+                logger.debug(f"Found subnet reference: {subnet_address}")
 
-                # Check for route table reference
-                elif (
-                    prop_name == "route_table_id"
-                    and target_resource_type == "aws_route_table"
-                ):
-                    route_table_address = target_ref
+            # Check for gateway reference
+            elif prop_name == "gateway_id" and target_resource_type in [
+                "aws_internet_gateway",
+                "aws_egress_only_internet_gateway",
+                "aws_vpn_gateway",
+                "aws_nat_gateway",
+            ]:
+                gateway_address = target_ref
+                logger.debug(f"Found gateway reference: {gateway_address}")
+
+            # Check for route table reference
+            elif (
+                prop_name == "route_table_id"
+                and target_resource_type == "aws_route_table"
+            ):
+                route_table_address = target_ref
+                logger.debug(f"Found route table reference: {route_table_address}")
 
         # If no references found from configuration, try to resolve from values
         # (state JSON)
@@ -256,14 +310,20 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             resource_name: Original resource name for logging
         """
         # Generate subnet TOSCA node name using context-aware logic
-        if context:
-            subnet_node_name = context.generate_tosca_node_name_from_address(
-                subnet_address, "aws_subnet"
-            )
+        # If the address is already a TOSCA node name (no dot), use it directly
+        if "." in subnet_address:
+            # Terraform address format, need to convert to TOSCA node name
+            if context:
+                subnet_node_name = context.generate_tosca_node_name_from_address(
+                    subnet_address, "aws_subnet"
+                )
+            else:
+                subnet_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    subnet_address, "aws_subnet"
+                )
         else:
-            subnet_node_name = BaseResourceMapper.generate_tosca_node_name(
-                subnet_address, "aws_subnet"
-            )
+            # Already a TOSCA node name
+            subnet_node_name = subnet_address
 
         # Find the subnet node in the builder
         subnet_node = self._find_node_in_builder(builder, subnet_node_name)
@@ -324,14 +384,20 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             return
 
         # Generate gateway TOSCA node name using context-aware logic
-        if context:
-            gateway_node_name = context.generate_tosca_node_name_from_address(
-                gateway_address, gateway_type
-            )
+        # If the address is already a TOSCA node name (no dot), use it directly
+        if "." in gateway_address:
+            # Terraform address format, need to convert to TOSCA node name
+            if context:
+                gateway_node_name = context.generate_tosca_node_name_from_address(
+                    gateway_address, gateway_type
+                )
+            else:
+                gateway_node_name = BaseResourceMapper.generate_tosca_node_name(
+                    gateway_address, gateway_type
+                )
         else:
-            gateway_node_name = BaseResourceMapper.generate_tosca_node_name(
-                gateway_address, gateway_type
-            )
+            # Already a TOSCA node name
+            gateway_node_name = gateway_address
 
         # Find the gateway node in the builder
         gateway_node = self._find_node_in_builder(builder, gateway_node_name)

@@ -5,7 +5,9 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_s3_bucket import AWSS3BucketMapper
+from src.plugins.provisioning.terraform.mappers.aws.aws_s3_bucket import (
+    AWSS3BucketMapper,
+)
 
 
 class FakeNodeBuilder:

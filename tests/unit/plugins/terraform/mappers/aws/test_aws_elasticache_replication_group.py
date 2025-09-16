@@ -2,7 +2,7 @@
 import pytest
 
 from src.plugins.provisioning.terraform.exceptions import TerraformDataError
-from src.plugins.terraform.mappers.aws.aws_elasticache_replication_group import (
+from src.plugins.provisioning.terraform.mappers.aws.aws_elasticache_replication_group import (  # noqa: E501
     AWSElastiCacheReplicationGroupMapper,
 )
 

@@ -1,6 +1,8 @@
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_lb_listener import AWSLBListenerMapper
+from src.plugins.provisioning.terraform.mappers.aws.aws_lb_listener import (
+    AWSLBListenerMapper,
+)
 
 
 class FakeBuilder:

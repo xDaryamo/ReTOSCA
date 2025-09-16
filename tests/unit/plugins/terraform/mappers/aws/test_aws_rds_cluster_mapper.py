@@ -1,6 +1,8 @@
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_rds_cluster import AWSRDSClusterMapper
+from src.plugins.provisioning.terraform.mappers.aws.aws_rds_cluster import (
+    AWSRDSClusterMapper,
+)
 
 
 class _ReqBuilder:

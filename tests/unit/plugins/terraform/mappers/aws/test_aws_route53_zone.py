@@ -5,7 +5,9 @@ from typing import Any
 import pytest
 
 from src.core.common.base_mapper import BaseResourceMapper
-from src.plugins.terraform.mappers.aws.aws_route53_zone import AWSRoute53ZoneMapper
+from src.plugins.provisioning.terraform.mappers.aws.aws_route53_zone import (
+    AWSRoute53ZoneMapper,
+)
 
 
 class FakeReq:

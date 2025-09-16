@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_eip import AWSEIPMapper
+from src.plugins.provisioning.terraform.mappers.aws.aws_eip import AWSEIPMapper
 
 
 class FakeCap:
@@ -148,7 +148,7 @@ class TestGuards:
         b = FakeBuilder()
         ctx = FakeContext(property_values={}, metadata_values={})
         # avoid real import usage of DependencyFilter by stubbing it on the module
-        import src.plugins.terraform.context as ctxmod
+        import src.plugins.provisioning.terraform.context as ctxmod
 
         monkeypatch.setattr(ctxmod, "DependencyFilter", object, raising=False)
         m.map_resource("aws_eip.myip", "aws_eip", {"values": {}}, b, context=ctx)
@@ -253,7 +253,7 @@ class TestHappyPathWithContext:
         )
 
         # the mapper imports DependencyFilter at runtime; stub it so import works
-        import src.plugins.terraform.context as ctxmod
+        import src.plugins.provisioning.terraform.context as ctxmod
 
         class DummyDF:
             def __init__(
@@ -310,7 +310,7 @@ class TestHappyPathWithContext:
             filtered_refs=[],
             generated_name="aws_eip_nat_0",
         )
-        import src.plugins.terraform.context as ctxmod
+        import src.plugins.provisioning.terraform.context as ctxmod
 
         class DummyDF:
             def __init__(

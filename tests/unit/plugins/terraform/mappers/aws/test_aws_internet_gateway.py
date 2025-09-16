@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.mappers.aws.aws_internet_gateway import (
+from src.plugins.provisioning.terraform.mappers.aws.aws_internet_gateway import (
     AWSInternetGatewayMapper,
 )
 

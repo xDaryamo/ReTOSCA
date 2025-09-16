@@ -101,7 +101,7 @@ class AWSRouteTableAssociationMapper(SingleResourceMapper):
             Tuple of (subnet_address, gateway_address, route_table_address)
         """
         # Import here to avoid circular imports
-        from src.plugins.terraform.mapper import TerraformMapper
+        from src.plugins.provisioning.terraform.mapper import TerraformMapper
 
         # Access the full plan via the TerraformMapper instance found on the call stack
         parsed_data: dict[str, Any] = {}

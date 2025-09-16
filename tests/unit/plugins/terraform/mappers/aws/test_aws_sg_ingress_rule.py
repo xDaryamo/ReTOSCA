@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from src.plugins.terraform.context import TerraformMappingContext
-from src.plugins.terraform.mappers.aws.aws_vpc_security_group_ingress_rule import (
+from src.plugins.provisioning.terraform.context import TerraformMappingContext
+from src.plugins.provisioning.terraform.mappers.aws.aws_vpc_security_group_ingress_rule import (  # noqa: E501
     AWSVPCSecurityGroupIngressRuleMapper,
 )
 
